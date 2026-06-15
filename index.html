@@ -1013,7 +1013,7 @@
           return;
         }
 
-        if (status === "busy" || cloudBusy) {
+        if (status === "busy" || (!status && cloudBusy)) {
           els.syncMode.textContent = "同步中";
           els.syncTitle.textContent = "正在同步";
           els.syncText.textContent = message || "正在和云端数据比较。";
