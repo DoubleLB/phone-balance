@@ -161,9 +161,18 @@
           </div>
         </details>
 
-        <article class="notice-card">
-          <h2>同步与隐私</h2>
-          <p>当前原型使用统一本地存储，所有账号会一起保存和读取。运营商实时余额属于隐私数据，本页面不会也不能从第三方网络自动获取真实余额。</p>
+        <article class="sync-card">
+          <div class="sync-row">
+            <span class="sync-badge">
+              <span class="sync-dot" id="syncDot"></span>
+              <span id="syncMode">本地</span>
+            </span>
+            <button type="button" class="section-action sync-action" id="syncNowBtn">立即同步</button>
+          </div>
+          <h2 id="syncTitle">本地存储</h2>
+          <p id="syncText">当前设备仍可离线使用；接入云端后，同一网址下的账号数据可在多设备之间自动同步。</p>
+          <p class="sync-meta">最近同步 <span class="mono" id="syncLastAt">--</span></p>
+          <p class="sync-note">说明：运营商实时余额属于隐私数据，本页不会调用任何运营商接口。当前同步方案为统一云端记录，不区分个人登录，打开同一网址的设备会共用这一份数据。</p>
         </article>
       </section>
     </section>

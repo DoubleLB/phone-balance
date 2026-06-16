@@ -2,6 +2,13 @@
       "use strict";
 
       var STORAGE_KEY = "phone_balance_overview_v3";
+      var CLOUD_SYNC = {
+        enabled: true,
+        supabaseUrl: "https://rhkzsyhxezlppfxqzalm.supabase.co",
+        anonKey: "sb_publishable_jg7Ht5A1SXFfkn4VZImQKA_eAHoh5uZ",
+        table: "balance_state",
+        rowId: "china_broadcasting"
+      };
 
       var CARRIERS = {
         broadcasting: { name: "中国广电", logo: "广", icon: "svg/中国广电.svg", color: "#0f766e", color2: "#14b8a6" },
@@ -12,6 +19,7 @@
 
       var DEFAULT_STATE = {
         lastUpdated: "2026-06-16T00:00:00+08:00",
+        modifiedAt: "2026-06-16T00:00:00+08:00",
         openCarriers: ["broadcasting"],
         accounts: [
           {
@@ -111,6 +119,15 @@
       var currentRoute = parseRoute();
       var homeScrollY = 0;
       var toastTimer = null;
+      var cloudReady = false;
+      var cloudBusy = false;
+      var pushTimer = null;
+      var syncState = {
+        mode: "local",
+        title: "本地存储",
+        text: "当前设备仍可离线使用；接入云端后，同一网址下的账号数据可在多设备之间自动同步。",
+        syncedAt: ""
+      };
 
       var els = {
         homePage: document.getElementById("homePage"),
@@ -149,6 +166,12 @@
         warningInput: document.getElementById("warningInput"),
         rechargeAmountInput: document.getElementById("rechargeAmountInput"),
         addRechargeBtn: document.getElementById("addRechargeBtn"),
+        syncNowBtn: document.getElementById("syncNowBtn"),
+        syncMode: document.getElementById("syncMode"),
+        syncTitle: document.getElementById("syncTitle"),
+        syncText: document.getElementById("syncText"),
+        syncLastAt: document.getElementById("syncLastAt"),
+        syncDot: document.getElementById("syncDot"),
         saveBtn: document.getElementById("saveBtn"),
         resetAccountBtn: document.getElementById("resetAccountBtn"),
         toast: document.getElementById("toast")
@@ -170,6 +193,10 @@
         return JSON.parse(JSON.stringify(DEFAULT_STATE));
       }
 
+      function cloneStateSnapshot(input) {
+        return JSON.parse(JSON.stringify(input || state));
+      }
+
       function normalizeState(input) {
         var next = Object.assign(cloneDefault(), input || {});
         var defaults = cloneDefault().accounts;
@@ -187,6 +214,7 @@
           return Boolean(CARRIERS[carrier]);
         }) : ["broadcasting"];
         next.lastUpdated = next.lastUpdated || DEFAULT_STATE.lastUpdated;
+        next.modifiedAt = next.modifiedAt || next.lastUpdated || DEFAULT_STATE.modifiedAt;
         return next;
       }
 
@@ -210,6 +238,29 @@
 
       function saveState() {
         localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+      }
+
+      function serializeCloudState(snapshot) {
+        var source = normalizeState(snapshot || state);
+        return {
+          schemaVersion: 2,
+          modifiedAt: source.modifiedAt,
+          lastUpdated: source.lastUpdated,
+          accounts: source.accounts.map(function (account) {
+            return {
+              id: account.id,
+              carrier: account.carrier,
+              type: account.type,
+              number: account.number,
+              billingType: account.billingType,
+              balance: roundMoney(account.balance),
+              lastSettledDate: account.lastSettledDate,
+              monthlyCharge: roundMoney(account.monthlyCharge || 0),
+              dailyCharge: roundMoney(account.dailyCharge || 0),
+              warningThreshold: roundMoney(account.warningThreshold || 0)
+            };
+          })
+        };
       }
 
       function safeNumber(value, fallback) {
@@ -303,6 +354,244 @@
         return pad(date.getMonth() + 1) + "-" + pad(date.getDate()) + " " + pad(date.getHours()) + ":" + pad(date.getMinutes());
       }
 
+      function timeValue(value) {
+        var timestamp = new Date(value || 0).getTime();
+        return Number.isFinite(timestamp) ? timestamp : 0;
+      }
+
+      function stateModifiedTime(snapshot) {
+        return timeValue(snapshot && (snapshot.modifiedAt || snapshot.lastUpdated));
+      }
+
+      function buildLegacyMergedState(remoteData, baseState, rowUpdatedAt) {
+        if (!remoteData || (remoteData.anchorBalance == null && remoteData.monthlyCharge == null && remoteData.warningThreshold == null && !remoteData.lastSettledDate)) {
+          return null;
+        }
+
+        var merged = cloneStateSnapshot(baseState || cloneDefault());
+        var account = merged.accounts.find(function (item) {
+          return item.id === "broadcasting-19290397571";
+        });
+        if (!account) return null;
+
+        account.balance = safeNumber(remoteData.anchorBalance, account.balance);
+        account.monthlyCharge = safeNumber(remoteData.monthlyCharge, account.monthlyCharge);
+        account.warningThreshold = safeNumber(remoteData.warningThreshold, account.warningThreshold);
+        account.lastSettledDate = isDateKey(remoteData.lastSettledDate) ? remoteData.lastSettledDate : account.lastSettledDate;
+        merged.lastUpdated = remoteData.lastUpdated || rowUpdatedAt || merged.lastUpdated;
+        merged.modifiedAt = remoteData.modifiedAt || remoteData.lastUpdated || rowUpdatedAt || merged.modifiedAt;
+        return normalizeState(merged);
+      }
+
+      function decodeRemoteState(row, baseState) {
+        if (!row || !row.data) return null;
+        var remoteData = row.data;
+        if (Array.isArray(remoteData.accounts)) {
+          return normalizeState({
+            lastUpdated: remoteData.lastUpdated || row.updated_at || (baseState && baseState.lastUpdated),
+            modifiedAt: remoteData.modifiedAt || remoteData.lastUpdated || row.updated_at || (baseState && baseState.modifiedAt),
+            openCarriers: (baseState && baseState.openCarriers) || cloneDefault().openCarriers,
+            accounts: remoteData.accounts
+          });
+        }
+        return buildLegacyMergedState(remoteData, baseState, row.updated_at);
+      }
+
+      function remoteNeedsMigration(row) {
+        return Boolean(row && row.data && !Array.isArray(row.data.accounts));
+      }
+
+      function isCloudConfigured() {
+        return Boolean(
+          CLOUD_SYNC.enabled &&
+          CLOUD_SYNC.supabaseUrl &&
+          CLOUD_SYNC.anonKey &&
+          CLOUD_SYNC.table &&
+          CLOUD_SYNC.rowId &&
+          window.fetch
+        );
+      }
+
+      function cloudEndpoint() {
+        return CLOUD_SYNC.supabaseUrl.replace(/\/+$/, "") + "/rest/v1/" + encodeURIComponent(CLOUD_SYNC.table);
+      }
+
+      function cloudHeaders(extra) {
+        var headers = {
+          apikey: CLOUD_SYNC.anonKey,
+          Authorization: "Bearer " + CLOUD_SYNC.anonKey,
+          "Content-Type": "application/json"
+        };
+        Object.keys(extra || {}).forEach(function (key) {
+          headers[key] = extra[key];
+        });
+        return headers;
+      }
+
+      function renderSyncStatus(mode, message, syncedAt) {
+        if (mode) syncState.mode = mode;
+        if (message) syncState.text = message;
+        if (syncedAt) syncState.syncedAt = syncedAt;
+
+        if (!isCloudConfigured()) {
+          syncState.mode = "local";
+          syncState.title = "本地存储";
+          syncState.text = "当前设备仍可离线使用；接入云端后，同一网址下的账号数据可在多设备之间自动同步。";
+        } else if (syncState.mode === "busy") {
+          syncState.title = "正在同步";
+        } else if (syncState.mode === "error") {
+          syncState.title = "同步异常";
+        } else {
+          syncState.mode = "ready";
+          syncState.title = "云端同步已开启";
+        }
+
+        if (!els.syncMode) return;
+
+        els.syncDot.className = "sync-dot";
+        if (syncState.mode === "busy") {
+          els.syncMode.textContent = "同步中";
+          els.syncDot.classList.add("busy");
+        } else if (syncState.mode === "error") {
+          els.syncMode.textContent = "异常";
+          els.syncDot.classList.add("error");
+        } else if (syncState.mode === "ready") {
+          els.syncMode.textContent = "云端";
+          els.syncDot.classList.add("ready");
+        } else {
+          els.syncMode.textContent = "本地";
+        }
+
+        els.syncTitle.textContent = syncState.title;
+        els.syncText.textContent = syncState.text;
+        els.syncLastAt.textContent = syncState.syncedAt ? formatDateTime(syncState.syncedAt) : "--";
+      }
+
+      function isRemoteNewer(remoteState, localState) {
+        var remoteTime = stateModifiedTime(remoteState);
+        var localTime = stateModifiedTime(localState);
+        return remoteTime > localTime;
+      }
+
+      function scheduleCloudPush(delay) {
+        if (!cloudReady || !isCloudConfigured()) return;
+        window.clearTimeout(pushTimer);
+        pushTimer = window.setTimeout(function () {
+          if (cloudBusy) {
+            scheduleCloudPush(500);
+            return;
+          }
+          pushCloudState(false);
+        }, typeof delay === "number" ? delay : 700);
+      }
+
+      function pullCloudState(showMessage) {
+        if (!isCloudConfigured() || cloudBusy) return Promise.resolve(false);
+
+        cloudBusy = true;
+        renderSyncStatus("busy", "正在读取云端数据。");
+
+        var localState = normalizeState(cloneStateSnapshot(state));
+        var url = cloudEndpoint()
+          + "?id=eq." + encodeURIComponent(CLOUD_SYNC.rowId)
+          + "&select=id,data,updated_at";
+
+        return fetch(url, { headers: cloudHeaders() })
+          .then(function (response) {
+            if (!response.ok) throw new Error("读取失败 " + response.status);
+            return response.json();
+          })
+          .then(function (rows) {
+            var row = rows && rows[0];
+            var remoteState = decodeRemoteState(row, localState);
+            var needsMigration = remoteNeedsMigration(row);
+
+            cloudReady = true;
+
+            if (remoteState && isRemoteNewer(remoteState, localState)) {
+              state = remoteState;
+              settleAll();
+              saveState();
+              render();
+              if (needsMigration) {
+                scheduleCloudPush(0);
+              }
+              renderSyncStatus("ready", "已使用云端最新数据。", row.updated_at || remoteState.modifiedAt);
+              if (showMessage) showToast("已同步云端数据");
+              return true;
+            }
+
+            if (!row || !remoteState || needsMigration || isRemoteNewer(localState, remoteState)) {
+              scheduleCloudPush(0);
+            }
+
+            renderSyncStatus("ready", row ? "当前设备数据已接入云端。": "正在创建首份云端数据。", row && (row.updated_at || (row.data && row.data.modifiedAt)));
+            if (showMessage) showToast(row ? "同步检查已完成" : "正在创建云端数据");
+            return false;
+          })
+          .catch(function (error) {
+            renderSyncStatus("error", error.message || "云端暂时不可用，已保留本地数据。");
+            if (showMessage) showToast("云端暂时不可用");
+            return false;
+          })
+          .finally(function () {
+            cloudBusy = false;
+          });
+      }
+
+      function pushCloudState(showMessage) {
+        if (!isCloudConfigured() || cloudBusy) return Promise.resolve(false);
+
+        cloudBusy = true;
+        renderSyncStatus("busy", "正在保存到云端。");
+
+        var body = JSON.stringify({
+          id: CLOUD_SYNC.rowId,
+          data: serializeCloudState(state),
+          updated_at: new Date().toISOString()
+        });
+
+        return fetch(cloudEndpoint() + "?on_conflict=id", {
+          method: "POST",
+          headers: cloudHeaders({ Prefer: "resolution=merge-duplicates,return=minimal" }),
+          body: body
+        })
+          .then(function (response) {
+            if (!response.ok) throw new Error("保存失败 " + response.status);
+            var syncedAt = new Date().toISOString();
+            renderSyncStatus("ready", "云端数据已保存。", syncedAt);
+            if (showMessage) showToast("已同步到云端");
+            return true;
+          })
+          .catch(function (error) {
+            renderSyncStatus("error", error.message || "云端保存失败，已保留本地数据。");
+            if (showMessage) showToast("云端保存失败");
+            return false;
+          })
+          .finally(function () {
+            cloudBusy = false;
+          });
+      }
+
+      function syncNow() {
+        if (!isCloudConfigured()) {
+          renderSyncStatus();
+          return showToast("当前仅本地存储");
+        }
+        pullCloudState(false).then(function () {
+          if (cloudBusy) return;
+          pushCloudState(true);
+        });
+      }
+
+      function setupCloudSync() {
+        if (!isCloudConfigured()) {
+          renderSyncStatus();
+          return;
+        }
+        pullCloudState(false);
+      }
+
       function escapeHtml(value) {
         return String(value).replace(/[&<>"']/g, function (char) {
           return {
@@ -341,8 +630,11 @@
           if (settleAccount(account)) changed = true;
         });
         if (changed) {
-          state.lastUpdated = new Date().toISOString();
+          var now = new Date().toISOString();
+          state.lastUpdated = now;
+          state.modifiedAt = now;
           saveState();
+          scheduleCloudPush();
         }
       }
 
@@ -609,6 +901,7 @@
           els.homePage.classList.remove("hidden");
           renderHome();
         }
+        renderSyncStatus();
         lastRenderedDate = todayKey();
       }
 
@@ -674,8 +967,11 @@
         }
         account.warningThreshold = roundMoney(warning);
         account.lastSettledDate = addDays(todayKey(), -1);
-        state.lastUpdated = new Date().toISOString();
+        var now = new Date().toISOString();
+        state.lastUpdated = now;
+        state.modifiedAt = now;
         saveState();
+        scheduleCloudPush();
         render();
         showToast("设置已保存");
       }
@@ -689,8 +985,11 @@
 
         account.balance = roundMoney(account.balance + amount);
         account.lastSettledDate = addDays(todayKey(), -1);
-        state.lastUpdated = new Date().toISOString();
+        var now = new Date().toISOString();
+        state.lastUpdated = now;
+        state.modifiedAt = now;
         saveState();
+        scheduleCloudPush();
         els.rechargeAmountInput.value = "";
         render();
         showToast("充值已加入余额");
@@ -705,8 +1004,11 @@
         Object.keys(fallback).forEach(function (key) {
           account[key] = fallback[key];
         });
-        state.lastUpdated = new Date().toISOString();
+        var now = new Date().toISOString();
+        state.lastUpdated = now;
+        state.modifiedAt = now;
         saveState();
+        scheduleCloudPush();
         render();
         showToast("此账号已恢复默认");
       }
@@ -715,6 +1017,7 @@
         state.lastUpdated = new Date().toISOString();
         saveState();
         render();
+        pullCloudState(false);
         if (showMessage) showToast("已刷新");
       }
 
@@ -747,6 +1050,9 @@
       els.toggleAllBtn.addEventListener("click", toggleAllCarriers);
       els.backBtn.addEventListener("click", navigateHome);
       els.addRechargeBtn.addEventListener("click", addRecharge);
+      if (els.syncNowBtn) {
+        els.syncNowBtn.addEventListener("click", syncNow);
+      }
       els.saveBtn.addEventListener("click", saveSettings);
       els.resetAccountBtn.addEventListener("click", resetCurrentAccount);
 
@@ -771,7 +1077,12 @@
         if (!document.hidden) refreshNow(false);
       });
 
+      window.addEventListener("online", function () {
+        pullCloudState(false);
+      });
+
       render();
+      setupCloudSync();
 
       if (!window.location.hash) {
         window.history.replaceState(null, "", "#home");
@@ -783,6 +1094,7 @@
         } else {
           els.homeUpdated.textContent = formatDateTime(state.lastUpdated);
           els.detailUpdated.textContent = formatDateTime(state.lastUpdated);
+          if (!document.hidden) pullCloudState(false);
         }
       }, 30000);
     })();
