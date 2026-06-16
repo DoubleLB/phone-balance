@@ -3,1202 +3,174 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-  <meta name="theme-color" content="#0f766e">
+  <meta name="theme-color" content="#eef3f8">
   <meta name="apple-mobile-web-app-capable" content="yes">
-  <meta name="apple-mobile-web-app-title" content="余额计算">
-  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-  <title>中国广电余额计算</title>
-  <style>
-    :root {
-      color-scheme: light;
-      --bg: #f4f7f6;
-      --card: #ffffff;
-      --text: #142322;
-      --muted: #667574;
-      --line: #dfe8e6;
-      --brand: #0f766e;
-      --brand-2: #14b8a6;
-      --warn: #dc2626;
-      --warn-2: #f97316;
-      --shadow: 0 12px 30px rgba(15, 23, 42, .08);
-      --radius: 18px;
-    }
-
-    * {
-      box-sizing: border-box;
-      -webkit-tap-highlight-color: transparent;
-    }
-
-    html,
-    body {
-      margin: 0;
-      min-height: 100%;
-      background: var(--bg);
-      color: var(--text);
-      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
-      letter-spacing: 0;
-    }
-
-    body {
-      padding: max(14px, env(safe-area-inset-top)) 14px max(22px, env(safe-area-inset-bottom));
-    }
-
-    button,
-    input {
-      font: inherit;
-    }
-
-    button {
-      min-height: 46px;
-      border: 0;
-      border-radius: 14px;
-      background: var(--brand);
-      color: #fff;
-      font-weight: 700;
-      cursor: pointer;
-      touch-action: manipulation;
-    }
-
-    button.secondary {
-      background: #e8f2f1;
-      color: var(--brand);
-    }
-
-    button.danger {
-      background: #fee2e2;
-      color: #b91c1c;
-    }
-
-    input {
-      width: 100%;
-      min-height: 48px;
-      border: 1px solid var(--line);
-      border-radius: 14px;
-      background: #fbfdfd;
-      color: var(--text);
-      padding: 10px 12px;
-      outline: none;
-    }
-
-    input:focus {
-      border-color: var(--brand-2);
-      box-shadow: 0 0 0 3px rgba(20, 184, 166, .16);
-    }
-
-    .app {
-      width: 100%;
-      max-width: 430px;
-      margin: 0 auto;
-    }
-
-    .pull-tip {
-      position: fixed;
-      top: 8px;
-      left: 50%;
-      z-index: 3;
-      transform: translate(-50%, -54px);
-      min-width: 132px;
-      border-radius: 999px;
-      background: rgba(20, 35, 34, .88);
-      color: #fff;
-      padding: 9px 14px;
-      text-align: center;
-      font-size: 13px;
-      opacity: 0;
-      transition: transform .18s ease, opacity .18s ease;
-      pointer-events: none;
-    }
-
-    .pull-tip.show {
-      transform: translate(-50%, 0);
-      opacity: 1;
-    }
-
-    .topbar {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      gap: 12px;
-      margin: 8px 2px 14px;
-    }
-
-    .title h1 {
-      margin: 0;
-      font-size: 20px;
-      line-height: 1.2;
-    }
-
-    .title p {
-      margin: 5px 0 0;
-      color: var(--muted);
-      font-size: 13px;
-    }
-
-    .provider {
-      flex: 0 0 auto;
-      padding: 7px 10px;
-      border-radius: 999px;
-      background: #dff5f2;
-      color: #0f766e;
-      font-size: 12px;
-      font-weight: 800;
-      white-space: nowrap;
-    }
-
-    .balance-card {
-      position: relative;
-      overflow: hidden;
-      border-radius: 24px;
-      padding: 22px;
-      color: #fff;
-      background:
-        radial-gradient(circle at 86% 12%, rgba(255, 255, 255, .28), transparent 28%),
-        linear-gradient(135deg, #0f766e, #14b8a6 58%, #22c55e);
-      box-shadow: var(--shadow);
-    }
-
-    .balance-card.warning {
-      background:
-        radial-gradient(circle at 86% 12%, rgba(255, 255, 255, .28), transparent 28%),
-        linear-gradient(135deg, #b91c1c, #ef4444 56%, #f97316);
-    }
-
-    .balance-label {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      gap: 10px;
-      font-size: 14px;
-      font-weight: 700;
-      opacity: .95;
-    }
-
-    .pill {
-      display: inline-flex;
-      align-items: center;
-      min-height: 28px;
-      border-radius: 999px;
-      padding: 4px 10px;
-      background: rgba(255, 255, 255, .18);
-      font-size: 12px;
-      font-weight: 800;
-      white-space: nowrap;
-    }
-
-    .refresh-button {
-      position: absolute;
-      top: 70px;
-      right: 22px;
-      width: 46px;
-      min-height: 46px;
-      display: grid;
-      place-items: center;
-      border-radius: 50%;
-      padding: 0;
-      background: rgba(255, 255, 255, .18);
-      color: #fff;
-      box-shadow: inset 0 0 0 1px rgba(255, 255, 255, .2);
-    }
-
-    .refresh-button:active {
-      transform: scale(.96);
-      background: rgba(255, 255, 255, .24);
-    }
-
-    .refresh-button svg {
-      width: 23px;
-      height: 23px;
-      stroke: currentColor;
-      stroke-width: 2.4;
-      fill: none;
-      stroke-linecap: round;
-      stroke-linejoin: round;
-    }
-
-    .amount {
-      margin: 14px 0 8px;
-      padding-right: 68px;
-      font-size: clamp(44px, 15vw, 62px);
-      line-height: 1;
-      font-weight: 900;
-      letter-spacing: 0;
-    }
-
-    .amount small {
-      font-size: .42em;
-      font-weight: 800;
-    }
-
-    .balance-sub {
-      display: grid;
-      grid-template-columns: 1fr 1fr;
-      gap: 10px;
-      margin-top: 18px;
-    }
-
-    .balance-sub div {
-      min-height: 58px;
-      border-radius: 16px;
-      background: rgba(255, 255, 255, .16);
-      padding: 10px 11px;
-    }
-
-    .balance-sub span,
-    .mini-label {
-      display: block;
-      font-size: 12px;
-      opacity: .82;
-    }
-
-    .balance-sub strong {
-      display: block;
-      margin-top: 3px;
-      font-size: 18px;
-      line-height: 1.25;
-    }
-
-    .balance-sub .subline {
-      margin-top: 4px;
-      font-size: 11px;
-      line-height: 1.3;
-      opacity: .78;
-    }
-
-    .alert {
-      display: none;
-      margin-top: 14px;
-      border-radius: 16px;
-      background: rgba(255, 255, 255, .18);
-      padding: 11px 12px;
-      font-size: 14px;
-      font-weight: 900;
-      line-height: 1.35;
-    }
-
-    .warning .alert {
-      display: block;
-    }
-
-    .card,
-    details {
-      margin-top: 14px;
-      border: 1px solid var(--line);
-      border-radius: var(--radius);
-      background: var(--card);
-      box-shadow: 0 8px 22px rgba(15, 23, 42, .045);
-    }
-
-    .card {
-      padding: 16px;
-    }
-
-    .section-title {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      gap: 10px;
-      margin-bottom: 13px;
-    }
-
-    .section-title h2 {
-      margin: 0;
-      font-size: 17px;
-      line-height: 1.2;
-    }
-
-    .section-title span {
-      color: var(--muted);
-      font-size: 12px;
-      white-space: nowrap;
-    }
-
-    .grid {
-      display: grid;
-      grid-template-columns: 1fr 1fr;
-      gap: 10px;
-    }
-
-    .metric {
-      min-height: 74px;
-      border-radius: 16px;
-      background: #f7faf9;
-      padding: 12px;
-    }
-
-    .metric span {
-      display: block;
-      color: var(--muted);
-      font-size: 12px;
-      line-height: 1.3;
-    }
-
-    .metric strong {
-      display: block;
-      margin-top: 7px;
-      font-size: 19px;
-      line-height: 1.2;
-    }
-
-    .rule {
-      margin: 12px 0 0;
-      color: var(--muted);
-      font-size: 12px;
-      line-height: 1.5;
-    }
-
-    .sync-row {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      gap: 12px;
-      border-radius: 16px;
-      background: #f7faf9;
-      padding: 12px;
-    }
-
-    .sync-row strong {
-      display: block;
-      font-size: 15px;
-      line-height: 1.25;
-    }
-
-    .sync-row span {
-      display: block;
-      margin-top: 4px;
-      color: var(--muted);
-      font-size: 12px;
-      line-height: 1.35;
-    }
-
-    .sync-dot {
-      width: 12px;
-      height: 12px;
-      flex: 0 0 auto;
-      border-radius: 999px;
-      background: #94a3b8;
-      box-shadow: 0 0 0 5px rgba(148, 163, 184, .12);
-    }
-
-    .sync-dot.ready {
-      background: #16a34a;
-      box-shadow: 0 0 0 5px rgba(22, 163, 74, .12);
-    }
-
-    .sync-dot.busy {
-      background: #0ea5e9;
-      box-shadow: 0 0 0 5px rgba(14, 165, 233, .12);
-    }
-
-    .sync-dot.error {
-      background: #dc2626;
-      box-shadow: 0 0 0 5px rgba(220, 38, 38, .12);
-    }
-
-    details {
-      overflow: hidden;
-    }
-
-    summary {
-      min-height: 56px;
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      gap: 12px;
-      padding: 0 16px;
-      list-style: none;
-      cursor: pointer;
-      font-weight: 900;
-    }
-
-    summary::-webkit-details-marker {
-      display: none;
-    }
-
-    summary::after {
-      content: "+";
-      width: 28px;
-      height: 28px;
-      border-radius: 50%;
-      display: grid;
-      place-items: center;
-      background: #eef6f5;
-      color: var(--brand);
-      font-size: 20px;
-      line-height: 1;
-    }
-
-    details[open] summary::after {
-      content: "-";
-    }
-
-    .panel {
-      border-top: 1px solid var(--line);
-      padding: 16px;
-    }
-
-    .field {
-      margin-bottom: 13px;
-    }
-
-    .field label {
-      display: block;
-      margin-bottom: 7px;
-      color: #314341;
-      font-size: 13px;
-      font-weight: 800;
-    }
-
-    .actions {
-      display: grid;
-      grid-template-columns: 1fr 1fr;
-      gap: 10px;
-      margin-top: 4px;
-    }
-
-    .actions.single {
-      grid-template-columns: 1fr;
-    }
-
-    .sub-actions {
-      display: flex;
-      justify-content: flex-end;
-      margin-top: 10px;
-    }
-
-    .text-action {
-      min-height: auto;
-      border-radius: 0;
-      background: transparent;
-      color: #9f1239;
-      padding: 6px 2px;
-      font-size: 12px;
-      font-weight: 800;
-    }
-
-    .toast {
-      position: fixed;
-      left: 50%;
-      bottom: max(18px, env(safe-area-inset-bottom));
-      z-index: 4;
-      transform: translate(-50%, 18px);
-      max-width: min(360px, calc(100vw - 28px));
-      border-radius: 999px;
-      background: rgba(20, 35, 34, .92);
-      color: #fff;
-      padding: 11px 15px;
-      font-size: 14px;
-      opacity: 0;
-      pointer-events: none;
-      transition: transform .2s ease, opacity .2s ease;
-    }
-
-    .toast.show {
-      transform: translate(-50%, 0);
-      opacity: 1;
-    }
-
-    @media (max-width: 340px) {
-      body {
-        padding-left: 10px;
-        padding-right: 10px;
-      }
-
-      .grid,
-      .balance-sub,
-      .actions {
-        grid-template-columns: 1fr;
-      }
-
-      .amount {
-        font-size: 43px;
-        padding-right: 58px;
-      }
-    }
-  </style>
+  <meta name="apple-mobile-web-app-title" content="余额总览">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <title>余额总览</title>
+  <link rel="stylesheet" href="css/style.css">
 </head>
 <body>
-  <div class="pull-tip" id="pullTip">释放刷新</div>
   <main class="app">
-    <header class="topbar">
-      <div class="title">
-        <h1>中国广电</h1>
-      </div>
-      <div class="provider" id="providerPill">广电 28/月</div>
-    </header>
+    <section id="homePage">
+      <article class="overview-card" id="overviewCard">
+        <div class="overview-head">
+          <div>
+            <span>全部账号当前可用余额</span>
+            <strong class="money"><small>¥</small><span id="overviewBalance">--</span></strong>
+          </div>
+          <span class="overview-tag" id="overviewWarningTag">本地计算</span>
+        </div>
+        <button class="overview-refresh" id="refreshBtn" type="button" aria-label="立即刷新" title="立即刷新">
+          <img src="svg/刷新.svg" alt="" aria-hidden="true">
+        </button>
+        <div class="overview-grid">
+          <div>
+            <span>账号数量</span>
+            <strong id="overviewAccounts">--</strong>
+          </div>
+          <div>
+            <span>最早可用至</span>
+            <strong id="overviewSoonest">--</strong>
+          </div>
+        </div>
+        <p class="overview-note" id="overviewNote">当日费用尚未扣除，页面只根据本地保存余额进行估算。</p>
+        <p class="overview-time">最后更新 <span class="mono" id="homeUpdated">--</span></p>
+      </article>
 
-    <section class="balance-card" id="balanceCard" aria-live="polite">
-      <div class="balance-label">
-        <span>当前可用余额</span>
-        <span class="pill">今日未扣费</span>
-      </div>
-      <button class="refresh-button" id="refreshBtn" type="button" aria-label="立即刷新" title="立即刷新">
-        <svg viewBox="0 0 24 24" aria-hidden="true">
-          <path d="M21 12a9 9 0 0 1-15.2 6.5"></path>
-          <path d="M3 12A9 9 0 0 1 18.2 5.5"></path>
-          <path d="M18 2v4h4"></path>
-          <path d="M6 22v-4H2"></path>
-        </svg>
-      </button>
-      <div class="amount"><small>¥</small><span id="balanceValue">--</span></div>
-      <div class="balance-sub">
-        <div>
-          <span>预计可用</span>
-          <strong id="daysLeft">--</strong>
-          <span class="subline" id="usableUntil">--</span>
+      <section class="page warning-card" id="warningSection">
+        <div class="section-title" style="margin-bottom:0;">
+          <h2>预警账号</h2>
+          <span id="warningSummary">--</span>
         </div>
-        <div>
-          <span>最后更新</span>
-          <strong id="lastUpdated">--</strong>
+        <div class="warning-list" id="warningList"></div>
+      </section>
+
+      <section class="page">
+        <div class="section-title">
+          <h2>运营商</h2>
+          <button class="section-action" id="toggleAllBtn" type="button">全部展开</button>
         </div>
-      </div>
-      <div class="alert" id="warningText"></div>
+        <div class="carrier-list" id="carrierList"></div>
+      </section>
+
+      <section class="page rule-card">
+        <h2>结算规则</h2>
+        <p>当日打开页面不扣除当日费用。中国广电按月费折算日均扣费，中国联通按固定日费扣费；中国电信、中国移动按月末最后一天一次扣除月固定费用。页面只做本地静态计算，不调用任何运营商接口，运营商实时余额无法通过第三方页面自动获取。</p>
+      </section>
     </section>
 
-    <section class="card">
-      <div class="section-title">
-        <h2>本月扣费明细</h2>
-        <span id="monthName">--</span>
-      </div>
-      <div class="grid">
-        <div class="metric">
-          <span>每日扣费金额</span>
-          <strong id="dailyFee">--</strong>
+    <section id="detailPage" class="hidden">
+      <header class="topbar detail-header">
+        <button class="icon" id="backBtn" type="button" aria-label="返回首页" title="返回首页">
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M19 12H5"></path>
+            <path d="M12 19l-7-7 7-7"></path>
+          </svg>
+        </button>
+        <div class="title-block">
+          <h1 id="detailTitle">--</h1>
+          <p id="detailAccount">--</p>
         </div>
-        <div class="metric">
-          <span>本月已结算扣费</span>
-          <strong id="monthSettledTotal">--</strong>
-        </div>
-        <div class="metric">
-          <span>当月总天数</span>
-          <strong id="daysInMonth">--</strong>
-        </div>
-        <div class="metric">
-          <span>今日日期</span>
-          <strong id="todayText">--</strong>
-        </div>
-        <div class="metric">
-          <span>已结算天数</span>
-          <strong id="settledDays">--</strong>
-        </div>
-        <div class="metric">
-          <span>月固定扣款额</span>
-          <strong id="monthlyCharge">--</strong>
-        </div>
-      </div>
-      <p class="rule">结算规则：每日结束后自动结算当日费用，用户当天打开页面时不扣除当天费用。</p>
+      </header>
+
+      <section class="page details-stack">
+        <article class="balance-panel" id="balancePanel">
+          <div class="balance-label">
+            <span>当前可用余额</span>
+            <span class="status-pill">今日未扣费</span>
+          </div>
+          <div class="balance-amount money"><small>¥</small><span id="detailBalance">--</span></div>
+          <div class="balance-sub detail-balance-sub">
+            <div>
+              <span>预计可用</span>
+              <strong id="detailDaysLeft">--</strong>
+              <span class="subline">至 <span id="detailUntil">--</span></span>
+            </div>
+            <div>
+              <span>最后更新</span>
+              <strong id="detailUpdated">--</strong>
+            </div>
+          </div>
+          <div class="warning-text" id="warningText"></div>
+        </article>
+
+        <details class="card rule-card charge-detail-panel" open>
+          <summary>本月扣费明细</summary>
+          <div class="charge-detail-body">
+            <div class="detail-table">
+              <div class="detail-line">
+                <span>每日扣费金额</span>
+                <strong id="dailyFee">--</strong>
+              </div>
+              <div class="detail-line">
+                <span>本月已结算扣费</span>
+                <strong id="monthSettledFee">--</strong>
+              </div>
+              <div class="detail-line">
+                <span>当月总天数</span>
+                <strong id="daysInMonth">--</strong>
+              </div>
+              <div class="detail-line">
+                <span>已结算天数</span>
+                <strong id="settledDays">--</strong>
+              </div>
+              <div class="detail-line">
+                <span id="chargeLabel">月固定扣款额</span>
+                <strong id="fixedCharge">--</strong>
+              </div>
+            </div>
+            <p>结算规则：每日结束后自动结算当日费用，用户当天打开页面时不扣除当天费用。</p>
+          </div>
+        </details>
+
+        <details class="edit-panel">
+          <summary>充值余额</summary>
+          <div class="panel-body">
+            <div class="field">
+              <label for="rechargeAmountInput">充值金额（元）</label>
+              <input id="rechargeAmountInput" type="number" inputmode="decimal" min="0" step="0.01">
+            </div>
+            <div class="form-actions single">
+              <button type="button" id="addRechargeBtn">加入余额</button>
+            </div>
+            <p>充值会直接加入当前账号余额，不记录明细，避免长期占用本地存储。</p>
+          </div>
+        </details>
+
+        <details class="edit-panel">
+          <summary>参数设置</summary>
+          <div class="panel-body">
+            <div class="field">
+              <label for="balanceInput">当前余额（元）</label>
+              <input id="balanceInput" type="number" inputmode="decimal" step="0.01">
+            </div>
+            <div class="field">
+              <label for="chargeInput" id="chargeInputLabel">每月固定扣款金额（元）</label>
+              <input id="chargeInput" type="number" inputmode="decimal" min="0" step="0.01">
+            </div>
+            <div class="field">
+              <label for="warningInput">余额预警阈值（元）</label>
+              <input id="warningInput" type="number" inputmode="decimal" min="0" step="0.01">
+            </div>
+            <div class="form-actions">
+              <button type="button" id="saveBtn">保存设置</button>
+              <button type="button" class="link danger-link" id="resetAccountBtn">恢复此账号默认</button>
+            </div>
+            <p>保存余额后会把该账号的计算基准设为昨天，保证今天不会重复扣费。所有账号统一保存到本机浏览器存储。</p>
+          </div>
+        </details>
+
+        <article class="notice-card">
+          <h2>同步与隐私</h2>
+          <p>当前原型使用统一本地存储，所有账号会一起保存和读取。运营商实时余额属于隐私数据，本页面不会也不能从第三方网络自动获取真实余额。</p>
+        </article>
+      </section>
     </section>
-
-    <section class="card">
-      <div class="section-title">
-        <h2>数据同步</h2>
-        <span id="syncMode">本地</span>
-      </div>
-      <div class="sync-row">
-        <div>
-          <strong id="syncTitle">本地存储</strong>
-          <span id="syncText">当前数据保存在本机浏览器；配置云端后，换设备打开同一网址会自动同步。</span>
-        </div>
-        <i class="sync-dot" id="syncDot" aria-hidden="true"></i>
-      </div>
-      <p class="rule">无登录同步会让这个网站使用同一份云端数据；请只在个人私用网址中开启。</p>
-    </section>
-
-    <details>
-      <summary>充值</summary>
-      <div class="panel">
-        <div class="field">
-          <label for="rechargeAmountInput">充值金额（元）</label>
-          <input id="rechargeAmountInput" type="number" inputmode="decimal" min="0" step="0.01">
-        </div>
-        <div class="actions single">
-          <button type="button" id="addRechargeBtn">加入余额</button>
-        </div>
-      </div>
-    </details>
-
-    <details>
-      <summary>设置</summary>
-      <div class="panel">
-        <div class="field">
-          <label for="balanceInput">当前余额（元）</label>
-          <input id="balanceInput" type="number" inputmode="decimal" step="0.01">
-        </div>
-        <div class="field">
-          <label for="monthlyInput">每月固定扣款金额（元）</label>
-          <input id="monthlyInput" type="number" inputmode="decimal" min="0" step="0.01">
-        </div>
-        <div class="field">
-          <label for="thresholdInput">余额预警阈值（元）</label>
-          <input id="thresholdInput" type="number" inputmode="decimal" min="0" step="0.01">
-        </div>
-        <div class="actions single">
-          <button type="button" id="saveBtn">保存设置</button>
-        </div>
-        <div class="sub-actions">
-          <button type="button" class="text-action" id="resetBtn">恢复默认</button>
-        </div>
-        <p class="rule">保存余额后，计算基准会设为昨天，避免今天重复扣费。</p>
-      </div>
-    </details>
   </main>
 
   <div class="toast" id="toast"></div>
 
-  <script>
-    (function () {
-      "use strict";
-
-      var STORAGE_KEY = "china_broadcasting_balance_v1";
-      var DEFAULT_STATE = {
-        provider: "china-broadcasting",
-        anchorBalance: 49.55,
-        lastSettledDate: "2026-06-13",
-        monthlyCharge: 28,
-        warningThreshold: 10,
-        lastUpdated: "2026-06-14T00:00:00+08:00"
-      };
-
-      // No-login sync means every visitor to this page shares one cloud record.
-      var CLOUD_SYNC = {
-        enabled: true,
-        supabaseUrl: "https://rhkzsyhxezlppfxqzalm.supabase.co",
-        anonKey: "sb_publishable_jg7Ht5A1SXFfkn4VZImQKA_eAHoh5uZ",
-        table: "balance_state",
-        rowId: "china_broadcasting"
-      };
-
-      var state = loadState();
-      var toastTimer = null;
-      var lastRenderedDate = "";
-      var cloudReady = false;
-      var cloudBusy = false;
-      var pushTimer = null;
-
-      var els = {
-        balanceCard: document.getElementById("balanceCard"),
-        balanceValue: document.getElementById("balanceValue"),
-        daysLeft: document.getElementById("daysLeft"),
-        usableUntil: document.getElementById("usableUntil"),
-        lastUpdated: document.getElementById("lastUpdated"),
-        warningText: document.getElementById("warningText"),
-        monthName: document.getElementById("monthName"),
-        dailyFee: document.getElementById("dailyFee"),
-        monthSettledTotal: document.getElementById("monthSettledTotal"),
-        daysInMonth: document.getElementById("daysInMonth"),
-        todayText: document.getElementById("todayText"),
-        settledDays: document.getElementById("settledDays"),
-        monthlyCharge: document.getElementById("monthlyCharge"),
-        balanceInput: document.getElementById("balanceInput"),
-        monthlyInput: document.getElementById("monthlyInput"),
-        thresholdInput: document.getElementById("thresholdInput"),
-        providerPill: document.getElementById("providerPill"),
-        syncMode: document.getElementById("syncMode"),
-        syncTitle: document.getElementById("syncTitle"),
-        syncText: document.getElementById("syncText"),
-        syncDot: document.getElementById("syncDot"),
-        saveBtn: document.getElementById("saveBtn"),
-        resetBtn: document.getElementById("resetBtn"),
-        refreshBtn: document.getElementById("refreshBtn"),
-        rechargeAmountInput: document.getElementById("rechargeAmountInput"),
-        addRechargeBtn: document.getElementById("addRechargeBtn"),
-        toast: document.getElementById("toast"),
-        pullTip: document.getElementById("pullTip")
-      };
-
-      function loadState() {
-        try {
-          var raw = localStorage.getItem(STORAGE_KEY);
-          if (!raw) return cloneDefault();
-          var parsed = JSON.parse(raw);
-          return normalizeState(Object.assign(cloneDefault(), parsed));
-        } catch (error) {
-          return cloneDefault();
-        }
-      }
-
-      function cloneDefault() {
-        return JSON.parse(JSON.stringify(DEFAULT_STATE));
-      }
-
-      function normalizeState(next) {
-        next.anchorBalance = safeNumber(next.anchorBalance, DEFAULT_STATE.anchorBalance);
-        next.monthlyCharge = safeNumber(next.monthlyCharge, DEFAULT_STATE.monthlyCharge);
-        next.warningThreshold = safeNumber(next.warningThreshold, DEFAULT_STATE.warningThreshold);
-        next.lastSettledDate = isDateKey(next.lastSettledDate) ? next.lastSettledDate : DEFAULT_STATE.lastSettledDate;
-        next.lastUpdated = next.lastUpdated || new Date().toISOString();
-        delete next.rechargeHistory;
-        delete next.rechargeCost;
-        return next;
-      }
-
-      function saveState() {
-        localStorage.setItem(STORAGE_KEY, JSON.stringify(compactState()));
-        scheduleCloudPush();
-      }
-
-      function compactState() {
-        var compactState = {
-          provider: state.provider,
-          anchorBalance: state.anchorBalance,
-          lastSettledDate: state.lastSettledDate,
-          monthlyCharge: state.monthlyCharge,
-          warningThreshold: state.warningThreshold,
-          lastUpdated: state.lastUpdated
-        };
-        return compactState;
-      }
-
-      function saveLocalOnly() {
-        localStorage.setItem(STORAGE_KEY, JSON.stringify(compactState()));
-      }
-
-      function safeNumber(value, fallback) {
-        var number = Number(value);
-        return Number.isFinite(number) ? number : fallback;
-      }
-
-      function isDateKey(value) {
-        return /^\d{4}-\d{2}-\d{2}$/.test(String(value));
-      }
-
-      function pad(value) {
-        return String(value).padStart(2, "0");
-      }
-
-      function dateKeyFromParts(year, month, day) {
-        return year + "-" + pad(month) + "-" + pad(day);
-      }
-
-      function partsFromKey(key) {
-        var parts = key.split("-").map(Number);
-        return { year: parts[0], month: parts[1], day: parts[2] };
-      }
-
-      function todayKey() {
-        var date = new Date();
-        return dateKeyFromParts(date.getFullYear(), date.getMonth() + 1, date.getDate());
-      }
-
-      function civilTime(key) {
-        var parts = partsFromKey(key);
-        return Date.UTC(parts.year, parts.month - 1, parts.day);
-      }
-
-      function addDays(key, amount) {
-        var parts = partsFromKey(key);
-        var date = new Date(Date.UTC(parts.year, parts.month - 1, parts.day + amount));
-        return dateKeyFromParts(date.getUTCFullYear(), date.getUTCMonth() + 1, date.getUTCDate());
-      }
-
-      function compareKeys(a, b) {
-        if (a === b) return 0;
-        return civilTime(a) < civilTime(b) ? -1 : 1;
-      }
-
-      function daysInMonthFor(year, month) {
-        return new Date(year, month, 0).getDate();
-      }
-
-      function dailyFeeForDate(key, monthlyCharge) {
-        var parts = partsFromKey(key);
-        return monthlyCharge / daysInMonthFor(parts.year, parts.month);
-      }
-
-      // Auto-settle every complete natural day since the stored anchor.
-      function settleToYesterday() {
-        var today = todayKey();
-        var yesterday = addDays(today, -1);
-        var cursor = addDays(state.lastSettledDate, 1);
-        var didSettle = false;
-
-        while (compareKeys(cursor, yesterday) <= 0) {
-          state.anchorBalance -= dailyFeeForDate(cursor, state.monthlyCharge);
-          state.lastSettledDate = cursor;
-          cursor = addDays(cursor, 1);
-          didSettle = true;
-        }
-
-        if (didSettle) {
-          state.anchorBalance = roundMoney(state.anchorBalance);
-          state.lastUpdated = new Date().toISOString();
-          saveState();
-        }
-      }
-
-      function roundMoney(value) {
-        return Math.round((value + Number.EPSILON) * 1000000) / 1000000;
-      }
-
-      function formatMoney(value, digits) {
-        return Number(value).toFixed(digits);
-      }
-
-      function formatDateTime(value) {
-        var date = new Date(value);
-        if (Number.isNaN(date.getTime())) date = new Date();
-        return pad(date.getMonth() + 1) + "-" + pad(date.getDate()) + " " + pad(date.getHours()) + ":" + pad(date.getMinutes());
-      }
-
-      function estimateDaysLeft(balance, startKey) {
-        if (balance <= 0 || state.monthlyCharge <= 0) return 0;
-        var days = 0;
-        var current = startKey;
-        var remaining = balance;
-
-        while (days < 3650) {
-          var fee = dailyFeeForDate(current, state.monthlyCharge);
-          if (remaining + 0.0000001 < fee) break;
-          remaining -= fee;
-          days += 1;
-          current = addDays(current, 1);
-        }
-
-        return days;
-      }
-
-      function readableDate(key) {
-        var parts = partsFromKey(key);
-        return parts.year + "年" + parts.month + "月" + parts.day + "日";
-      }
-
-      function monthText(parts) {
-        return parts.year + "年" + parts.month + "月";
-      }
-
-      function render() {
-        settleToYesterday();
-
-        var today = todayKey();
-        var parts = partsFromKey(today);
-        var monthDays = daysInMonthFor(parts.year, parts.month);
-        var daily = state.monthlyCharge / monthDays;
-        var settledDays = Math.max(0, parts.day - 1);
-        var monthTotal = daily * settledDays;
-        var balance = roundMoney(state.anchorBalance);
-        var daysLeft = estimateDaysLeft(balance, today);
-        var isWarning = balance < state.warningThreshold;
-        var owe = balance < 0 ? Math.abs(balance) : 0;
-
-        els.balanceCard.classList.toggle("warning", isWarning);
-        els.balanceValue.textContent = formatMoney(balance, 2);
-        els.daysLeft.textContent = daysLeft > 0 ? "约 " + daysLeft + " 天" : "不足 1 天";
-        els.usableUntil.textContent = daysLeft > 0
-          ? "至 " + readableDate(addDays(today, daysLeft - 1))
-          : "今日结束后可能不足扣费";
-        els.lastUpdated.textContent = formatDateTime(state.lastUpdated);
-        els.warningText.textContent = balance < 0
-          ? "余额已为负，当前欠费 ¥" + formatMoney(owe, 2)
-          : "余额低于预警阈值 ¥" + formatMoney(state.warningThreshold, 2);
-
-        els.monthName.textContent = monthText(parts);
-        els.dailyFee.textContent = "¥" + formatMoney(daily, 3);
-        els.monthSettledTotal.textContent = "¥" + formatMoney(monthTotal, 2);
-        els.daysInMonth.textContent = monthDays + " 天";
-        els.todayText.textContent = parts.month + "月" + parts.day + "日";
-        els.settledDays.textContent = settledDays + " 天";
-        els.monthlyCharge.textContent = "¥" + formatMoney(state.monthlyCharge, 2);
-        els.providerPill.textContent = "广电 " + trimNumber(state.monthlyCharge) + "/月";
-        renderSyncStatus();
-
-        els.balanceInput.value = formatMoney(balance, 2);
-        els.monthlyInput.value = trimNumber(state.monthlyCharge);
-        els.thresholdInput.value = trimNumber(state.warningThreshold);
-
-        lastRenderedDate = today;
-      }
-
-      function trimNumber(value) {
-        return String(Number(Number(value).toFixed(3)));
-      }
-
-      function escapeHtml(value) {
-        return String(value).replace(/[&<>"']/g, function (char) {
-          return {
-            "&": "&amp;",
-            "<": "&lt;",
-            ">": "&gt;",
-            "\"": "&quot;",
-            "'": "&#39;"
-          }[char];
-        });
-      }
-
-      function yesterdayKeyForNow() {
-        return addDays(todayKey(), -1);
-      }
-
-      function saveSettings() {
-        var balance = Number(els.balanceInput.value);
-        var monthly = Number(els.monthlyInput.value);
-        var threshold = Number(els.thresholdInput.value);
-
-        if (!Number.isFinite(balance)) return showToast("请输入有效余额");
-        if (!Number.isFinite(monthly) || monthly < 0) return showToast("请输入有效月扣款");
-        if (!Number.isFinite(threshold) || threshold < 0) return showToast("请输入有效预警阈值");
-
-        state.anchorBalance = roundMoney(balance);
-        state.monthlyCharge = roundMoney(monthly);
-        state.warningThreshold = roundMoney(threshold);
-        state.lastSettledDate = yesterdayKeyForNow();
-        state.lastUpdated = new Date().toISOString();
-        saveState();
-        render();
-        showToast("设置已保存");
-      }
-
-      function resetState() {
-        if (!confirm("恢复默认值会重置余额、月扣款和预警阈值，确定继续？")) return;
-        state = cloneDefault();
-        saveState();
-        render();
-        showToast("已恢复默认值");
-      }
-
-      function addRecharge() {
-        settleToYesterday();
-
-        var amount = Number(els.rechargeAmountInput.value);
-
-        if (!Number.isFinite(amount) || amount <= 0) return showToast("请输入有效充值金额");
-
-        var now = new Date().toISOString();
-        state.anchorBalance = roundMoney(state.anchorBalance + amount);
-        state.lastSettledDate = yesterdayKeyForNow();
-        state.lastUpdated = now;
-
-        saveState();
-        els.rechargeAmountInput.value = "";
-        render();
-        showToast("充值已加入余额");
-      }
-
-      function showToast(message) {
-        window.clearTimeout(toastTimer);
-        els.toast.textContent = message;
-        els.toast.classList.add("show");
-        toastTimer = window.setTimeout(function () {
-          els.toast.classList.remove("show");
-        }, 1800);
-      }
-
-      function refreshNow(source, updateTimestamp) {
-        if (updateTimestamp) {
-          state.lastUpdated = new Date().toISOString();
-          saveState();
-        }
-        render();
-        pullCloudState(false);
-        if (source) showToast(source);
-      }
-
-      function isCloudConfigured() {
-        return Boolean(
-          CLOUD_SYNC.enabled &&
-          CLOUD_SYNC.supabaseUrl &&
-          CLOUD_SYNC.anonKey &&
-          CLOUD_SYNC.table &&
-          CLOUD_SYNC.rowId &&
-          window.fetch
-        );
-      }
-
-      function renderSyncStatus(status, message) {
-        if (!els.syncMode) return;
-
-        els.syncDot.className = "sync-dot";
-        if (!isCloudConfigured()) {
-          els.syncMode.textContent = "本地";
-          els.syncTitle.textContent = "本地存储";
-          els.syncText.textContent = "当前数据保存在本机浏览器；配置云端后，换设备打开同一网址会自动同步。";
-          return;
-        }
-
-        if (status === "busy" || (!status && cloudBusy)) {
-          els.syncMode.textContent = "同步中";
-          els.syncTitle.textContent = "正在同步";
-          els.syncText.textContent = message || "正在和云端数据比较。";
-          els.syncDot.classList.add("busy");
-          return;
-        }
-
-        if (status === "error") {
-          els.syncMode.textContent = "异常";
-          els.syncTitle.textContent = "云同步异常";
-          els.syncText.textContent = message || "云端暂时不可用，已保留本地数据。";
-          els.syncDot.classList.add("error");
-          return;
-        }
-
-        els.syncMode.textContent = "云端";
-        els.syncTitle.textContent = "云同步已开启";
-        els.syncText.textContent = message || "当前设备会自动拉取和保存同一份云端余额。";
-        els.syncDot.classList.add("ready");
-      }
-
-      function cloudEndpoint() {
-        return CLOUD_SYNC.supabaseUrl.replace(/\/+$/, "") + "/rest/v1/" + encodeURIComponent(CLOUD_SYNC.table);
-      }
-
-      function cloudHeaders(extra) {
-        var headers = {
-          apikey: CLOUD_SYNC.anonKey,
-          Authorization: "Bearer " + CLOUD_SYNC.anonKey,
-          "Content-Type": "application/json"
-        };
-        Object.keys(extra || {}).forEach(function (key) {
-          headers[key] = extra[key];
-        });
-        return headers;
-      }
-
-      function isRemoteNewer(remoteState, localState) {
-        var remoteTime = new Date(remoteState.lastUpdated || 0).getTime();
-        var localTime = new Date(localState.lastUpdated || 0).getTime();
-        if (remoteTime !== localTime) return remoteTime > localTime;
-        return compareKeys(remoteState.lastSettledDate, localState.lastSettledDate) > 0;
-      }
-
-      function scheduleCloudPush(delay) {
-        if (!cloudReady || !isCloudConfigured()) return;
-        window.clearTimeout(pushTimer);
-        pushTimer = window.setTimeout(function () {
-          if (cloudBusy) {
-            scheduleCloudPush(500);
-            return;
-          }
-          pushCloudState(false);
-        }, typeof delay === "number" ? delay : 700);
-      }
-
-      function pullCloudState(showMessage) {
-        if (!isCloudConfigured() || cloudBusy) return Promise.resolve();
-
-        cloudBusy = true;
-        renderSyncStatus("busy", "正在读取云端数据。");
-
-        var url = cloudEndpoint()
-          + "?id=eq." + encodeURIComponent(CLOUD_SYNC.rowId)
-          + "&select=id,data,updated_at";
-
-        return fetch(url, { headers: cloudHeaders() })
-          .then(function (response) {
-            if (!response.ok) throw new Error("读取失败 " + response.status);
-            return response.json();
-          })
-          .then(function (rows) {
-            var remote = rows && rows[0] && rows[0].data ? normalizeState(Object.assign(cloneDefault(), rows[0].data)) : null;
-            var local = normalizeState(Object.assign(cloneDefault(), compactState()));
-
-            if (remote && isRemoteNewer(remote, local)) {
-              state = remote;
-              settleToYesterday();
-              saveLocalOnly();
-              render();
-              cloudReady = true;
-              scheduleCloudPush(0);
-              renderSyncStatus("ready", "已使用云端最新数据。");
-              if (showMessage) showToast("已同步云端数据");
-            } else {
-              cloudReady = true;
-              scheduleCloudPush(0);
-              renderSyncStatus("ready", remote ? "本机数据已是最新。" : "正在创建云端数据。");
-            }
-          })
-          .catch(function (error) {
-            renderSyncStatus("error", error.message || "云端暂时不可用，已保留本地数据。");
-          })
-          .finally(function () {
-            cloudBusy = false;
-          });
-      }
-
-      function pushCloudState(showMessage) {
-        if (!isCloudConfigured() || cloudBusy) return Promise.resolve();
-
-        cloudBusy = true;
-        renderSyncStatus("busy", "正在保存到云端。");
-
-        var body = JSON.stringify({
-          id: CLOUD_SYNC.rowId,
-          data: compactState(),
-          updated_at: new Date().toISOString()
-        });
-
-        return fetch(cloudEndpoint() + "?on_conflict=id", {
-          method: "POST",
-          headers: cloudHeaders({ Prefer: "resolution=merge-duplicates,return=minimal" }),
-          body: body
-        })
-          .then(function (response) {
-            if (!response.ok) throw new Error("保存失败 " + response.status);
-            renderSyncStatus("ready", "云端数据已保存。");
-            if (showMessage) showToast("已同步到云端");
-          })
-          .catch(function (error) {
-            renderSyncStatus("error", error.message || "云端保存失败，已保留本地数据。");
-          })
-          .finally(function () {
-            cloudBusy = false;
-          });
-      }
-
-      function setupCloudSync() {
-        if (!isCloudConfigured()) {
-          renderSyncStatus();
-          return;
-        }
-        pullCloudState(false).then(function () {
-          cloudReady = true;
-        });
-      }
-
-      function setupPullRefresh() {
-        var startY = 0;
-        var pulling = false;
-
-        window.addEventListener("touchstart", function (event) {
-          if (window.scrollY !== 0 || event.touches.length !== 1) return;
-          startY = event.touches[0].clientY;
-          pulling = true;
-        }, { passive: true });
-
-        window.addEventListener("touchmove", function (event) {
-          if (!pulling) return;
-          var distance = event.touches[0].clientY - startY;
-          els.pullTip.classList.toggle("show", distance > 70);
-        }, { passive: true });
-
-        window.addEventListener("touchend", function () {
-          if (!pulling) return;
-          var shouldRefresh = els.pullTip.classList.contains("show");
-          pulling = false;
-          els.pullTip.classList.remove("show");
-          if (shouldRefresh) refreshNow("已刷新", true);
-        }, { passive: true });
-      }
-
-      els.saveBtn.addEventListener("click", saveSettings);
-      els.resetBtn.addEventListener("click", resetState);
-      els.refreshBtn.addEventListener("click", function () {
-        refreshNow("已刷新", true);
-      });
-      els.addRechargeBtn.addEventListener("click", addRecharge);
-      document.addEventListener("visibilitychange", function () {
-        if (!document.hidden) refreshNow();
-      });
-
-      setupPullRefresh();
-      render();
-      setupCloudSync();
-
-      window.setInterval(function () {
-        if (lastRenderedDate !== todayKey()) {
-          refreshNow();
-        } else {
-          els.lastUpdated.textContent = formatDateTime(state.lastUpdated);
-        }
-      }, 30000);
-    })();
-  </script>
+  <script src="js/app.js"></script>
 </body>
 </html>
