@@ -1063,8 +1063,12 @@
       gap: 14px;
     }
 
-    .form-actions > button:first-child {
+    .form-actions > .primary-action {
       flex: 1 1 auto;
+    }
+
+    .form-actions > .danger-link {
+      flex: 0 0 auto;
     }
 
     .form-actions.single > button {
