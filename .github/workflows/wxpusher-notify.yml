@@ -1,4 +1,4 @@
-name: WxPusher Notify
+name: Balance Notify
 
 on:
   schedule:
@@ -17,6 +17,7 @@ jobs:
       SUPABASE_ROW_ID: china_broadcasting
       WXPUSHER_APP_TOKEN: ${{ secrets.WXPUSHER_APP_TOKEN }}
       WXPUSHER_UIDS: ${{ secrets.WXPUSHER_UIDS }}
+      SERVERCHAN_SENDKEY: ${{ secrets.SERVERCHAN_SENDKEY }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v5

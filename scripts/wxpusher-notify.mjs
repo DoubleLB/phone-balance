@@ -3,11 +3,12 @@ const CONFIG = {
   supabaseKey: process.env.SUPABASE_ANON_KEY || "sb_publishable_jg7Ht5A1SXFfkn4VZImQKA_eAHoh5uZ",
   table: process.env.SUPABASE_TABLE || "balance_state",
   rowId: process.env.SUPABASE_ROW_ID || "china_broadcasting",
-  appToken: process.env.WXPUSHER_APP_TOKEN || "",
-  uids: String(process.env.WXPUSHER_UIDS || "")
+  wxPusherAppToken: process.env.WXPUSHER_APP_TOKEN || "",
+  wxPusherUids: String(process.env.WXPUSHER_UIDS || "")
     .split(",")
     .map((item) => item.trim())
     .filter(Boolean),
+  serverChanSendKey: process.env.SERVERCHAN_SENDKEY || process.env.SERVERCHAN_SEND_KEY || "",
   dryRun: String(process.env.DRY_RUN || "") === "1"
 };
 
@@ -74,7 +75,9 @@ function dailyFeeFor(account, key) {
 
 function chargeForDate(account, key) {
   if (account.billingType === "daily") return safeNumber(account.dailyCharge, 0);
-  if (account.billingType === "monthEnd") return isLastDayOfMonth(key) ? safeNumber(account.monthlyCharge, 0) : 0;
+  if (account.billingType === "monthEnd") {
+    return isLastDayOfMonth(key) ? safeNumber(account.monthlyCharge, 0) : 0;
+  }
   return dailyFeeFor(account, key);
 }
 
@@ -127,11 +130,11 @@ function warningStatus(account, today) {
   if (!enabled) {
     reason = "提醒已关闭";
   } else if (mode === "days") {
-    reason = `可用天数 ${estimate.days} 天，阈值 ${threshold} 天`;
+    reason = `预计可用 ${estimate.days} 天，阈值 ${threshold} 天`;
   } else {
     reason = settledBalance < 0
-      ? `当前欠费 ¥${Math.abs(settledBalance).toFixed(2)}`
-      : `当前余额 ¥${settledBalance.toFixed(2)}，阈值 ¥${threshold.toFixed(2)}`;
+      ? `当前欠费 ${Math.abs(settledBalance).toFixed(2)} 元`
+      : `当前余额 ${settledBalance.toFixed(2)} 元，阈值 ${threshold.toFixed(2)} 元`;
   }
 
   return {
@@ -158,19 +161,42 @@ function formatChinaDate(key) {
   return `${parts.year}年${parts.month}月${parts.day}日`;
 }
 
-function buildMessage(account, status) {
+function shouldSendBackgroundNotification(account) {
+  return account.warningChannel !== "browser";
+}
+
+function buildTextPayload(account, status) {
   const type = account.type || "账号";
-  const carrier = account.carrier || "";
+  const carrier = account.carrier || "运营商";
   const balanceText = status.mode === "balance"
-    ? `余额 ¥${roundMoney(account.balance).toFixed(2)}`
-    : `可用天数 ${status.daysLeft} 天`;
-  return [
-    "余额提醒",
-    `${carrier} ${account.number} (${type})`,
-    balanceText,
-    status.reason,
-    `预计可用至 ${formatChinaDate(status.until)}`
-  ].join("\n");
+    ? `余额 ${roundMoney(account.balance).toFixed(2)} 元`
+    : `预计可用 ${status.daysLeft} 天`;
+
+  return {
+    title: `余额提醒｜${carrier} ${account.number}`,
+    lines: [
+      `${carrier} ${account.number} (${type})`,
+      balanceText,
+      status.reason,
+      `预计可用至 ${formatChinaDate(status.until)}`,
+      `检查时间 ${new Date().toLocaleString("zh-CN", { hour12: false, timeZone: "Asia/Shanghai" })}`
+    ]
+  };
+}
+
+function buildWxPusherMessage(payload) {
+  return [payload.title, ...payload.lines].join("\n");
+}
+
+function buildServerChanPayload(payload) {
+  return {
+    title: payload.title,
+    desp: [
+      `## ${payload.title}`,
+      "",
+      ...payload.lines.map((line) => `- ${line}`)
+    ].join("\n")
+  };
 }
 
 async function requestJson(url, init) {
@@ -205,6 +231,25 @@ function isWxPusherSendSuccess(result) {
   return items.every((item) => item && item.code === 1000);
 }
 
+function isServerChanSendSuccess(result) {
+  if (!result || typeof result !== "object") return false;
+  return result.code === 0;
+}
+
+function getEnabledProviders() {
+  const providers = [];
+
+  if (CONFIG.wxPusherAppToken && CONFIG.wxPusherUids.length) {
+    providers.push("wxpusher");
+  }
+
+  if (CONFIG.serverChanSendKey) {
+    providers.push("serverchan");
+  }
+
+  return providers;
+}
+
 async function loadRemoteState() {
   const url = `${CONFIG.supabaseUrl.replace(/\/+$/, "")}/rest/v1/${encodeURIComponent(CONFIG.table)}?id=eq.${encodeURIComponent(CONFIG.rowId)}&select=id,data,updated_at`;
   const response = await fetch(url, {
@@ -213,9 +258,11 @@ async function loadRemoteState() {
       Authorization: `Bearer ${CONFIG.supabaseKey}`
     }
   });
+
   if (!response.ok) {
-    throw new Error(`读取 Supabase 失败: HTTP ${response.status}`);
+    throw new Error(`Failed to load Supabase state: HTTP ${response.status}`);
   }
+
   const rows = await response.json();
   return rows && rows[0] ? rows[0] : null;
 }
@@ -238,13 +285,13 @@ async function saveRemoteState(data) {
   });
 }
 
-async function sendWxPusher(message) {
+async function sendWxPusher(payload) {
   const body = {
-    appToken: CONFIG.appToken,
-    content: message,
-    summary: message.slice(0, 64),
+    appToken: CONFIG.wxPusherAppToken,
+    content: buildWxPusherMessage(payload),
+    summary: payload.title.slice(0, 64),
     contentType: 1,
-    uids: CONFIG.uids,
+    uids: CONFIG.wxPusherUids,
     verifyPay: false
   };
 
@@ -255,15 +302,71 @@ async function sendWxPusher(message) {
   });
 }
 
+async function sendServerChan(payload) {
+  const serverChanPayload = buildServerChanPayload(payload);
+  const body = new URLSearchParams({
+    title: serverChanPayload.title,
+    desp: serverChanPayload.desp,
+    channel: "9"
+  });
+
+  return requestJson(`https://sctapi.ftqq.com/${CONFIG.serverChanSendKey}.send`, {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8" },
+    body
+  });
+}
+
+async function dispatchNotification(payload) {
+  const providerResults = [];
+
+  if (CONFIG.wxPusherAppToken && CONFIG.wxPusherUids.length) {
+    try {
+      const result = await sendWxPusher(payload);
+      providerResults.push({
+        provider: "wxpusher",
+        ok: isWxPusherSendSuccess(result),
+        result
+      });
+    } catch (error) {
+      providerResults.push({
+        provider: "wxpusher",
+        ok: false,
+        error: error && error.message ? error.message : String(error)
+      });
+    }
+  }
+
+  if (CONFIG.serverChanSendKey) {
+    try {
+      const result = await sendServerChan(payload);
+      providerResults.push({
+        provider: "serverchan",
+        ok: isServerChanSendSuccess(result),
+        result
+      });
+    } catch (error) {
+      providerResults.push({
+        provider: "serverchan",
+        ok: false,
+        error: error && error.message ? error.message : String(error)
+      });
+    }
+  }
+
+  return providerResults;
+}
+
 async function main() {
-  if (!CONFIG.appToken || CONFIG.uids.length === 0) {
-    log("缺少 WXPUSHER_APP_TOKEN 或 WXPUSHER_UIDS，已跳过。");
+  const providers = getEnabledProviders();
+  if (!providers.length) {
+    log("No notification provider configured, skipped.");
     return;
   }
 
   const row = await loadRemoteState();
   if (!row || !row.data || !Array.isArray(row.data.accounts)) {
-    log("未找到可用的远程账号数据，已跳过。");
+    log("Remote account state not found, skipped.");
     return;
   }
 
@@ -278,47 +381,54 @@ async function main() {
 
     const status = warningStatus(account, today);
     if (!status.triggered) continue;
-    if (account.warningChannel !== "wxpusher") continue;
+    if (!shouldSendBackgroundNotification(account)) continue;
     if (!cooldownPassed(account, nowIso)) continue;
 
-    notifications.push({ account, status, message: buildMessage(account, status) });
+    notifications.push({
+      account,
+      payload: buildTextPayload(account, status)
+    });
   }
 
   if (!notifications.length && !changed) {
-    log("没有需要处理的变更。");
+    log("No changes to process.");
     return;
   }
 
   if (notifications.length) {
-    let hasSendFailure = false;
+    let hasAccountFailure = false;
 
     for (const item of notifications) {
       if (CONFIG.dryRun) {
-        log(`[dry-run] ${item.message.replace(/\n/g, " | ")}`);
+        log(`[dry-run] ${item.payload.title}`);
         item.account.warningLastNotifiedAt = nowIso;
         changed = true;
         continue;
       }
 
-      try {
-        const result = await sendWxPusher(item.message);
-        if (!isWxPusherSendSuccess(result)) {
-          hasSendFailure = true;
-          fail(`WxPusher rejected ${item.account.number}: ${JSON.stringify(result)}`);
-          continue;
-        }
+      const results = await dispatchNotification(item.payload);
+      const successCount = results.filter((result) => result.ok).length;
 
-        log(`已发送 ${item.account.number}: ${JSON.stringify(result)}`);
+      for (const result of results) {
+        if (result.ok) {
+          log(`Sent ${item.account.number} via ${result.provider}: ${JSON.stringify(result.result)}`);
+        } else if (result.error) {
+          fail(`${result.provider} request failed for ${item.account.number}: ${result.error}`);
+        } else {
+          fail(`${result.provider} rejected ${item.account.number}: ${JSON.stringify(result.result)}`);
+        }
+      }
+
+      if (successCount > 0) {
         item.account.warningLastNotifiedAt = nowIso;
         changed = true;
-      } catch (error) {
-        hasSendFailure = true;
-        fail(`WxPusher request failed for ${item.account.number}: ${error && error.message ? error.message : String(error)}`);
+      } else {
+        hasAccountFailure = true;
       }
     }
 
-    if (hasSendFailure) {
-      throw new Error("One or more WxPusher notifications failed.");
+    if (hasAccountFailure) {
+      throw new Error("One or more notifications failed on all providers.");
     }
   }
 
@@ -326,7 +436,7 @@ async function main() {
     state.lastUpdated = nowIso;
     state.modifiedAt = nowIso;
     await saveRemoteState(state);
-    log("已更新远程状态。");
+    log("Remote state updated.");
   }
 }
 
