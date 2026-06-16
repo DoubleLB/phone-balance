@@ -108,6 +108,8 @@
       var state = loadState();
       var activeAccountId = "";
       var lastRenderedDate = "";
+      var currentRoute = parseRoute();
+      var homeScrollY = 0;
       var toastTimer = null;
 
       var els = {
@@ -557,6 +559,13 @@
           + '</div>';
       }
 
+      function balanceRiskClass(data) {
+        if (data.warning) return "risk-red";
+        if (data.daysLeft < 30) return "risk-orange";
+        if (data.daysLeft < 90) return "risk-green";
+        return "risk-blue";
+      }
+
       function renderDetail(accountId) {
         var account = accountById(accountId) || state.accounts[0];
         var carrier = CARRIERS[account.carrier];
@@ -578,6 +587,8 @@
         els.chargeLabel.textContent = account.billingType === "daily" ? "每日固定扣款额" : (account.billingType === "monthEnd" ? "月末固定扣款额" : "月固定扣款额");
         els.fixedCharge.textContent = account.billingType === "daily" ? "¥" + money(account.dailyCharge, 2) : "¥" + money(account.monthlyCharge, 2);
         els.warningText.textContent = data.warningText;
+        els.balancePanel.classList.remove("risk-blue", "risk-green", "risk-orange", "risk-red");
+        els.balancePanel.classList.add(balanceRiskClass(data));
         els.balancePanel.classList.toggle("warning", data.warning);
         els.balanceInput.value = money(data.balance, 2);
         els.chargeInput.value = account.billingType === "daily" ? trimNumber(account.dailyCharge) : trimNumber(account.monthlyCharge);
@@ -610,13 +621,15 @@
       function navigateHome() {
         if (window.location.hash === "#home" || window.location.hash === "") {
           render();
-          window.scrollTo({ top: 0, behavior: "smooth" });
           return;
         }
         window.location.hash = "home";
       }
 
       function navigateDetail(accountId) {
+        if (!parseRoute().accountId) {
+          homeScrollY = window.scrollY || window.pageYOffset || 0;
+        }
         window.location.hash = "account=" + encodeURIComponent(accountId);
       }
 
@@ -738,8 +751,20 @@
       els.resetAccountBtn.addEventListener("click", resetCurrentAccount);
 
       window.addEventListener("hashchange", function () {
+        var previousRoute = currentRoute;
+        var nextRoute = parseRoute();
+        if (!previousRoute.accountId && nextRoute.accountId) {
+          homeScrollY = window.scrollY || window.pageYOffset || 0;
+        }
+        currentRoute = nextRoute;
         render();
-        window.scrollTo({ top: 0, behavior: "smooth" });
+        if (nextRoute.accountId) {
+          window.scrollTo({ top: 0, behavior: "smooth" });
+        } else if (previousRoute.accountId) {
+          window.requestAnimationFrame(function () {
+            window.scrollTo({ top: homeScrollY, behavior: "auto" });
+          });
+        }
       });
 
       document.addEventListener("visibilitychange", function () {
