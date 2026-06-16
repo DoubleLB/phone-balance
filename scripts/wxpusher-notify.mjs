@@ -188,6 +188,23 @@ async function requestJson(url, init) {
   return json;
 }
 
+function normalizeToArray(value) {
+  return Array.isArray(value) ? value : [];
+}
+
+function isWxPusherSendSuccess(result) {
+  if (!result || result.code !== 1000 || result.success === false) {
+    return false;
+  }
+
+  const items = normalizeToArray(result.data);
+  if (!items.length) {
+    return false;
+  }
+
+  return items.every((item) => item && item.code === 1000);
+}
+
 async function loadRemoteState() {
   const url = `${CONFIG.supabaseUrl.replace(/\/+$/, "")}/rest/v1/${encodeURIComponent(CONFIG.table)}?id=eq.${encodeURIComponent(CONFIG.rowId)}&select=id,data,updated_at`;
   const response = await fetch(url, {
@@ -273,15 +290,35 @@ async function main() {
   }
 
   if (notifications.length) {
+    let hasSendFailure = false;
+
     for (const item of notifications) {
       if (CONFIG.dryRun) {
         log(`[dry-run] ${item.message.replace(/\n/g, " | ")}`);
-      } else {
-        const result = await sendWxPusher(item.message);
-        log(`已发送 ${item.account.number}: ${JSON.stringify(result)}`);
+        item.account.warningLastNotifiedAt = nowIso;
+        changed = true;
+        continue;
       }
-      item.account.warningLastNotifiedAt = nowIso;
-      changed = true;
+
+      try {
+        const result = await sendWxPusher(item.message);
+        if (!isWxPusherSendSuccess(result)) {
+          hasSendFailure = true;
+          fail(`WxPusher rejected ${item.account.number}: ${JSON.stringify(result)}`);
+          continue;
+        }
+
+        log(`已发送 ${item.account.number}: ${JSON.stringify(result)}`);
+        item.account.warningLastNotifiedAt = nowIso;
+        changed = true;
+      } catch (error) {
+        hasSendFailure = true;
+        fail(`WxPusher request failed for ${item.account.number}: ${error && error.message ? error.message : String(error)}`);
+      }
+    }
+
+    if (hasSendFailure) {
+      throw new Error("One or more WxPusher notifications failed.");
     }
   }
 
