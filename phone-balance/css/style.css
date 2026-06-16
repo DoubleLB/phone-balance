@@ -105,7 +105,8 @@
       color: var(--warn);
     }
 
-    input {
+    input,
+    select {
       width: 100%;
       min-height: 46px;
       border: 1px solid var(--line);
@@ -117,7 +118,8 @@
       outline: none;
     }
 
-    input:focus {
+    input:focus,
+    select:focus {
       border-color: var(--brand);
       box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.14);
     }
@@ -883,6 +885,13 @@
       display: block;
     }
 
+    .notify-summary {
+      margin: 10px 0 0;
+      color: rgba(255, 255, 255, 0.78);
+      font-size: 12px;
+      line-height: 1.5;
+    }
+
     .edit-panel {
       border: 1px solid var(--line);
       border-radius: var(--radius);
@@ -1054,6 +1063,33 @@
       color: var(--muted);
       font-size: 12px;
       font-weight: 800;
+    }
+
+    .field-check {
+      padding-top: 2px;
+    }
+
+    .toggle-line {
+      min-height: 46px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 14px;
+      margin-bottom: 0;
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: var(--card-soft);
+      padding: 0 12px;
+    }
+
+    .toggle-line input[type="checkbox"] {
+      width: 18px;
+      height: 18px;
+      min-height: 18px;
+      margin: 0;
+      padding: 0;
+      accent-color: var(--brand);
+      box-shadow: none;
     }
 
     .form-actions {

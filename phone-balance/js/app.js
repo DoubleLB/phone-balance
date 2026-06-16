@@ -163,7 +163,13 @@
         balanceInput: document.getElementById("balanceInput"),
         chargeInput: document.getElementById("chargeInput"),
         chargeInputLabel: document.getElementById("chargeInputLabel"),
+        warningInputLabel: document.getElementById("warningInputLabel"),
         warningInput: document.getElementById("warningInput"),
+        warningEnabledInput: document.getElementById("warningEnabledInput"),
+        warningModeInput: document.getElementById("warningModeInput"),
+        warningCooldownInput: document.getElementById("warningCooldownInput"),
+        warningChannelInput: document.getElementById("warningChannelInput"),
+        notifySummary: document.getElementById("notifySummary"),
         rechargeAmountInput: document.getElementById("rechargeAmountInput"),
         addRechargeBtn: document.getElementById("addRechargeBtn"),
         syncNowBtn: document.getElementById("syncNowBtn"),
@@ -189,8 +195,12 @@
         }
       }
 
-      function cloneDefault() {
+      function rawDefaultState() {
         return JSON.parse(JSON.stringify(DEFAULT_STATE));
+      }
+
+      function cloneDefault() {
+        return normalizeState(rawDefaultState());
       }
 
       function cloneStateSnapshot(input) {
@@ -198,8 +208,8 @@
       }
 
       function normalizeState(input) {
-        var next = Object.assign(cloneDefault(), input || {});
-        var defaults = cloneDefault().accounts;
+        var next = Object.assign(rawDefaultState(), input || {});
+        var defaults = rawDefaultState().accounts;
         var byId = {};
 
         (Array.isArray(input && input.accounts) ? input.accounts : []).forEach(function (account) {
@@ -225,6 +235,53 @@
         account.warningThreshold = safeNumber(account.warningThreshold, fallback.warningThreshold || 0);
         account.billingType = normalizeBillingType(account.billingType, fallback.billingType, account.carrier);
         account.lastSettledDate = isDateKey(account.lastSettledDate) ? account.lastSettledDate : fallback.lastSettledDate;
+        applyDefaultWarningSettings(account, fallback);
+        return account;
+      }
+
+      function defaultWarningSettings(account) {
+        if (account && account.billingType === "daily") {
+          return {
+            warningEnabled: true,
+            warningMode: "balance",
+            warningThreshold: 8,
+            warningCooldownHours: 24,
+            warningChannel: "wxpusher",
+            warningLastNotifiedAt: ""
+          };
+        }
+
+        return {
+          warningEnabled: true,
+          warningMode: "days",
+          warningThreshold: 30,
+          warningCooldownHours: 24,
+          warningChannel: "wxpusher",
+          warningLastNotifiedAt: ""
+        };
+      }
+
+      function normalizeWarningMode(value, fallback) {
+        return value === "days" ? "days" : "balance";
+      }
+
+      function normalizeWarningChannel(value, fallback) {
+        if (value === "sms" || value === "browser" || value === "wxpusher") return value;
+        return fallback || "wxpusher";
+      }
+
+      function applyDefaultWarningSettings(account, fallback) {
+        var defaults = defaultWarningSettings(account);
+        account.warningEnabled = typeof account.warningEnabled === "boolean"
+          ? account.warningEnabled
+          : (typeof fallback.warningEnabled === "boolean" ? fallback.warningEnabled : defaults.warningEnabled);
+        account.warningMode = normalizeWarningMode(account.warningMode, fallback.warningMode || defaults.warningMode);
+        account.warningThreshold = safeNumber(account.warningThreshold, safeNumber(fallback.warningThreshold, defaults.warningThreshold));
+        account.warningCooldownHours = safeNumber(account.warningCooldownHours, safeNumber(fallback.warningCooldownHours, defaults.warningCooldownHours));
+        account.warningChannel = normalizeWarningChannel(account.warningChannel, fallback.warningChannel || defaults.warningChannel);
+        account.warningLastNotifiedAt = typeof account.warningLastNotifiedAt === "string"
+          ? account.warningLastNotifiedAt
+          : (typeof fallback.warningLastNotifiedAt === "string" ? fallback.warningLastNotifiedAt : defaults.warningLastNotifiedAt);
         return account;
       }
 
@@ -257,7 +314,12 @@
               lastSettledDate: account.lastSettledDate,
               monthlyCharge: roundMoney(account.monthlyCharge || 0),
               dailyCharge: roundMoney(account.dailyCharge || 0),
-              warningThreshold: roundMoney(account.warningThreshold || 0)
+              warningThreshold: roundMoney(account.warningThreshold || 0),
+              warningEnabled: account.warningEnabled !== false,
+              warningMode: account.warningMode || "balance",
+              warningCooldownHours: roundMoney(account.warningCooldownHours || 24),
+              warningChannel: account.warningChannel || "wxpusher",
+              warningLastNotifiedAt: account.warningLastNotifiedAt || ""
             };
           })
         };
@@ -685,6 +747,102 @@
         };
       }
 
+      function warningThresholdLabel(mode) {
+        return mode === "days" ? "预计可用天数阈值（天）" : "余额预警阈值（元）";
+      }
+
+      function warningRuleText(account) {
+        if (account.warningEnabled === false) {
+          return "当前账号已关闭提醒规则。";
+        }
+
+        if (account.warningMode === "days") {
+          return "预计可用天数低于 " + trimNumber(account.warningThreshold) + " 天时触发提醒，默认 " + trimNumber(account.warningCooldownHours || 24) + " 小时内不重复提醒。";
+        }
+
+        return "余额低于 ¥" + money(account.warningThreshold, 2) + " 时触发提醒，默认 " + trimNumber(account.warningCooldownHours || 24) + " 小时内不重复提醒。";
+      }
+
+      function warningStatus(account, data) {
+        var mode = normalizeWarningMode(account.warningMode);
+        var threshold = safeNumber(account.warningThreshold, 0);
+        var triggered = false;
+        var reason = "";
+
+        if (account.warningEnabled === false) {
+          return {
+            enabled: false,
+            mode: mode,
+            threshold: threshold,
+            triggered: false,
+            reason: "当前账号未启用提醒。",
+            summary: warningRuleText(account)
+          };
+        }
+
+        if (mode === "days") {
+          triggered = data.daysLeft <= threshold;
+          reason = triggered
+            ? (data.daysLeft > 0
+              ? "预计仅剩约 " + data.daysLeft + " 天，已低于 " + trimNumber(threshold) + " 天提醒线"
+              : "预计可用时间已不足 1 天")
+            : "预计可用约 " + data.daysLeft + " 天";
+        } else {
+          triggered = data.balance <= threshold;
+          reason = triggered
+            ? (data.balance < 0
+              ? "当前已欠费 ¥" + money(Math.abs(data.balance), 2)
+              : "余额已低于提醒线 ¥" + money(threshold, 2))
+            : "当前余额 ¥" + money(data.balance, 2);
+        }
+
+        return {
+          enabled: true,
+          mode: mode,
+          threshold: threshold,
+          triggered: triggered,
+          reason: reason,
+          summary: warningRuleText(account)
+        };
+      }
+
+      function updateWarningInputLabel() {
+        if (!els.warningInputLabel || !els.warningModeInput) return;
+        els.warningInputLabel.textContent = warningThresholdLabel(els.warningModeInput.value);
+      }
+
+      function computeAccount(account) {
+        var today = todayKey();
+        var todayParts = partsFromKey(today);
+        var monthDays = daysInMonthFor(todayParts.year, todayParts.month);
+        var settledDays = account.billingType === "monthEnd" ? 0 : Math.max(0, todayParts.day - 1);
+        var dailyFee = dailyFeeFor(account, today);
+        var estimate = estimateUsage(account.balance, account, today);
+        var status = warningStatus(account, {
+          balance: roundMoney(account.balance),
+          daysLeft: estimate.days
+        });
+
+        return {
+          id: account.id,
+          carrier: account.carrier,
+          type: account.type,
+          number: account.number,
+          balance: roundMoney(account.balance),
+          dailyFee: dailyFee,
+          monthSettledFee: monthSettledFeeFor(account, today),
+          monthDays: monthDays,
+          settledDays: settledDays,
+          daysLeft: estimate.days,
+          until: estimate.until,
+          warning: status.triggered,
+          warningMode: status.mode,
+          warningThreshold: status.threshold,
+          warningText: status.reason,
+          warningRuleText: status.summary
+        };
+      }
+
       function carrierAccounts(carrierKey) {
         return state.accounts.filter(function (account) {
           return account.carrier === carrierKey;
@@ -800,7 +958,7 @@
           ? (soonest.data.daysLeft > 0 ? readableDate(soonest.data.until) : "今天")
           : "--";
         els.overviewNote.textContent = warningCount > 0
-          ? "已有账号低于预警阈值，建议优先查看预警账号。"
+          ? "已有账号触发当前提醒规则，建议优先查看预警账号。"
           : "当日费用尚未扣除，页面只根据本地保存余额进行估算。";
         els.overviewCard.classList.toggle("warning", warningCount > 0);
       }
@@ -816,7 +974,7 @@
         els.warningSummary.textContent = warnings.length > 0 ? warnings.length + " 个需要关注" : "暂无预警";
         els.warningSection.classList.toggle("safe", warnings.length === 0);
         if (warnings.length === 0) {
-          els.warningList.innerHTML = '<p>当前没有低于预警阈值的账号。</p>';
+          els.warningList.innerHTML = '<p>当前没有触发提醒规则的账号。</p>';
           return;
         }
 
@@ -885,6 +1043,14 @@
         els.balanceInput.value = money(data.balance, 2);
         els.chargeInput.value = account.billingType === "daily" ? trimNumber(account.dailyCharge) : trimNumber(account.monthlyCharge);
         els.warningInput.value = trimNumber(account.warningThreshold);
+        els.warningEnabledInput.checked = account.warningEnabled !== false;
+        els.warningModeInput.value = account.warningMode === "days" ? "days" : "balance";
+        els.warningCooldownInput.value = trimNumber(account.warningCooldownHours || 24);
+        els.warningChannelInput.value = account.warningChannel || "wxpusher";
+        updateWarningInputLabel();
+        if (els.notifySummary) {
+          els.notifySummary.textContent = data.warningRuleText;
+        }
         els.chargeInputLabel.textContent = account.billingType === "daily" ? "每日固定扣款金额（元）" : (account.billingType === "monthEnd" ? "月末固定扣款金额（元）" : "每月固定扣款金额（元）");
         els.detailUpdated.textContent = formatDateTime(state.lastUpdated);
       }
@@ -954,10 +1120,12 @@
         var balance = Number(els.balanceInput.value);
         var charge = Number(els.chargeInput.value);
         var warning = Number(els.warningInput.value);
+        var cooldown = Number(els.warningCooldownInput.value);
 
         if (!Number.isFinite(balance)) return showToast("请输入有效余额");
         if (!Number.isFinite(charge) || charge < 0) return showToast("请输入有效扣款金额");
         if (!Number.isFinite(warning) || warning < 0) return showToast("请输入有效预警阈值");
+        if (!Number.isFinite(cooldown) || cooldown < 1) return showToast("请输入有效提醒间隔");
 
         account.balance = roundMoney(balance);
         if (account.billingType === "daily") {
@@ -966,6 +1134,11 @@
           account.monthlyCharge = roundMoney(charge);
         }
         account.warningThreshold = roundMoney(warning);
+        account.warningEnabled = Boolean(els.warningEnabledInput && els.warningEnabledInput.checked);
+        account.warningMode = els.warningModeInput && els.warningModeInput.value === "days" ? "days" : "balance";
+        account.warningCooldownHours = Math.max(1, Math.round(cooldown));
+        account.warningChannel = els.warningChannelInput ? els.warningChannelInput.value : "wxpusher";
+        account.warningLastNotifiedAt = "";
         account.lastSettledDate = addDays(todayKey(), -1);
         var now = new Date().toISOString();
         state.lastUpdated = now;
@@ -1004,6 +1177,7 @@
         Object.keys(fallback).forEach(function (key) {
           account[key] = fallback[key];
         });
+        applyDefaultWarningSettings(account, fallback);
         var now = new Date().toISOString();
         state.lastUpdated = now;
         state.modifiedAt = now;
@@ -1055,6 +1229,9 @@
       }
       els.saveBtn.addEventListener("click", saveSettings);
       els.resetAccountBtn.addEventListener("click", resetCurrentAccount);
+      if (els.warningModeInput) {
+        els.warningModeInput.addEventListener("change", updateWarningInputLabel);
+      }
 
       window.addEventListener("hashchange", function () {
         var previousRoute = currentRoute;

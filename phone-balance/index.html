@@ -93,6 +93,7 @@
             </div>
           </div>
           <div class="warning-text" id="warningText"></div>
+          <p class="notify-summary" id="notifySummary"></p>
         </article>
 
         <details class="card rule-card charge-detail-panel" open>
@@ -150,14 +151,39 @@
               <input id="chargeInput" type="number" inputmode="decimal" min="0" step="0.01">
             </div>
             <div class="field">
-              <label for="warningInput">余额预警阈值（元）</label>
+              <label for="warningInput" id="warningInputLabel">余额预警阈值（元）</label>
               <input id="warningInput" type="number" inputmode="decimal" min="0" step="0.01">
+            </div>
+            <div class="field field-check">
+              <label class="toggle-line" for="warningEnabledInput">
+                <span>启用通知提醒</span>
+                <input id="warningEnabledInput" type="checkbox">
+              </label>
+            </div>
+            <div class="field">
+              <label for="warningModeInput">提醒触发方式</label>
+              <select id="warningModeInput">
+                <option value="balance">余额低于阈值</option>
+                <option value="days">可用天数低于阈值</option>
+              </select>
+            </div>
+            <div class="field">
+              <label for="warningCooldownInput">重复提醒间隔（小时）</label>
+              <input id="warningCooldownInput" type="number" inputmode="numeric" min="1" step="1">
+            </div>
+            <div class="field">
+              <label for="warningChannelInput">预留通知渠道</label>
+              <select id="warningChannelInput">
+                <option value="wxpusher">微信推送（WxPusher）</option>
+                <option value="browser">浏览器通知</option>
+                <option value="sms">短信</option>
+              </select>
             </div>
             <div class="form-actions">
               <button type="button" class="link danger-link" id="resetAccountBtn">恢复此账号默认</button>
               <button type="button" class="primary-action" id="saveBtn">保存设置</button>
             </div>
-            <p>保存余额后会把该账号的计算基准设为昨天，保证今天不会重复扣费。所有账号统一保存到本机浏览器存储。</p>
+            <p>保存余额后会把该账号的计算基准设为昨天，保证今天不会重复扣费。通知规则也会随账号一起保存，后续接入 WxPusher / Supabase 后可直接按该规则推送。</p>
           </div>
         </details>
 
