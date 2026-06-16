@@ -21,6 +21,10 @@ function fail(message) {
   process.exitCode = 1;
 }
 
+function warn(message) {
+  console.warn(`[notify] ${message}`);
+}
+
 function pad(value) {
   return String(value).padStart(2, "0");
 }
@@ -413,9 +417,9 @@ async function main() {
         if (result.ok) {
           log(`Sent ${item.account.number} via ${result.provider}: ${JSON.stringify(result.result)}`);
         } else if (result.error) {
-          fail(`${result.provider} request failed for ${item.account.number}: ${result.error}`);
+          warn(`${result.provider} request failed for ${item.account.number}: ${result.error}`);
         } else {
-          fail(`${result.provider} rejected ${item.account.number}: ${JSON.stringify(result.result)}`);
+          warn(`${result.provider} rejected ${item.account.number}: ${JSON.stringify(result.result)}`);
         }
       }
 
@@ -423,6 +427,7 @@ async function main() {
         item.account.warningLastNotifiedAt = nowIso;
         changed = true;
       } else {
+        fail(`All providers failed for ${item.account.number}.`);
         hasAccountFailure = true;
       }
     }
