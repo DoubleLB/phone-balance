@@ -547,6 +547,20 @@
         }, typeof delay === "number" ? delay : 700);
       }
 
+      function flushCloudPush(showMessage) {
+        if (!isCloudConfigured()) return Promise.resolve(false);
+        if (!cloudReady) {
+          scheduleCloudPush(700);
+          return Promise.resolve(false);
+        }
+        window.clearTimeout(pushTimer);
+        if (cloudBusy) {
+          scheduleCloudPush(500);
+          return Promise.resolve(false);
+        }
+        return pushCloudState(Boolean(showMessage));
+      }
+
       function pullCloudState(showMessage) {
         if (!isCloudConfigured() || cloudBusy) return Promise.resolve(false);
 
@@ -1144,7 +1158,7 @@
         state.lastUpdated = now;
         state.modifiedAt = now;
         saveState();
-        scheduleCloudPush();
+        flushCloudPush(false);
         render();
         showToast("设置已保存");
       }
@@ -1162,7 +1176,7 @@
         state.lastUpdated = now;
         state.modifiedAt = now;
         saveState();
-        scheduleCloudPush();
+        flushCloudPush(false);
         els.rechargeAmountInput.value = "";
         render();
         showToast("充值已加入余额");
@@ -1182,7 +1196,7 @@
         state.lastUpdated = now;
         state.modifiedAt = now;
         saveState();
-        scheduleCloudPush();
+        flushCloudPush(false);
         render();
         showToast("此账号已恢复默认");
       }

@@ -1071,23 +1071,32 @@
 
     .toggle-line {
       min-height: 46px;
-      display: flex;
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
       align-items: center;
-      justify-content: space-between;
       gap: 14px;
       margin-bottom: 0;
       border: 1px solid var(--line);
       border-radius: var(--radius);
       background: var(--card-soft);
-      padding: 0 12px;
+      padding: 0 12px 0 14px;
+    }
+
+    .toggle-line span {
+      display: block;
+      line-height: 1.35;
+      font-size: 14px;
+      font-weight: 800;
     }
 
     .toggle-line input[type="checkbox"] {
-      width: 18px;
-      height: 18px;
-      min-height: 18px;
+      width: 20px;
+      height: 20px;
+      min-height: 20px;
       margin: 0;
       padding: 0;
+      justify-self: end;
+      align-self: center;
       accent-color: var(--brand);
       box-shadow: none;
     }
