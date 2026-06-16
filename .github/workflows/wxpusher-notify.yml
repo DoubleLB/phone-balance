@@ -10,6 +10,7 @@ jobs:
     runs-on: ubuntu-latest
     env:
       TZ: Asia/Shanghai
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
       SUPABASE_URL: https://rhkzsyhxezlppfxqzalm.supabase.co
       SUPABASE_ANON_KEY: sb_publishable_jg7Ht5A1SXFfkn4VZImQKA_eAHoh5uZ
       SUPABASE_TABLE: balance_state
@@ -18,12 +19,13 @@ jobs:
       WXPUSHER_UIDS: ${{ secrets.WXPUSHER_UIDS }}
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v5
         with:
           node-version: "20"
+          package-manager-cache: false
 
       - name: Run notification worker
         run: node scripts/wxpusher-notify.mjs
