@@ -21,6 +21,7 @@
         lastUpdated: "2026-06-16T00:00:00+08:00",
         modifiedAt: "2026-06-16T00:00:00+08:00",
         openCarriers: ["broadcasting"],
+        accountDefaults: {},
         accounts: [
           {
             id: "broadcasting-19290397571",
@@ -180,6 +181,7 @@
         syncDot: document.getElementById("syncDot"),
         saveBtn: document.getElementById("saveBtn"),
         resetAccountBtn: document.getElementById("resetAccountBtn"),
+        setDefaultBtn: document.getElementById("setDefaultBtn"),
         toast: document.getElementById("toast")
       };
 
@@ -223,9 +225,22 @@
         next.openCarriers = Array.isArray(next.openCarriers) ? next.openCarriers.filter(function (carrier) {
           return Boolean(CARRIERS[carrier]);
         }) : ["broadcasting"];
+        next.accountDefaults = normalizeAccountDefaults(input && input.accountDefaults, defaults);
         next.lastUpdated = next.lastUpdated || DEFAULT_STATE.lastUpdated;
         next.modifiedAt = next.modifiedAt || next.lastUpdated || DEFAULT_STATE.modifiedAt;
         return next;
+      }
+
+      function normalizeAccountDefaults(input, defaults) {
+        var output = {};
+        var source = input && typeof input === "object" && !Array.isArray(input) ? input : {};
+        defaults.forEach(function (fallback) {
+          var account = source[fallback.id];
+          if (account && typeof account === "object") {
+            output[fallback.id] = normalizeAccount(Object.assign({}, fallback, account), fallback);
+          }
+        });
+        return output;
       }
 
       function normalizeAccount(account, fallback) {
@@ -300,28 +315,41 @@
       function serializeCloudState(snapshot) {
         var source = normalizeState(snapshot || state);
         return {
-          schemaVersion: 2,
+          schemaVersion: 3,
           modifiedAt: source.modifiedAt,
           lastUpdated: source.lastUpdated,
+          accountDefaults: serializeAccountDefaults(source.accountDefaults),
           accounts: source.accounts.map(function (account) {
-            return {
-              id: account.id,
-              carrier: account.carrier,
-              type: account.type,
-              number: account.number,
-              billingType: account.billingType,
-              balance: roundMoney(account.balance),
-              lastSettledDate: account.lastSettledDate,
-              monthlyCharge: roundMoney(account.monthlyCharge || 0),
-              dailyCharge: roundMoney(account.dailyCharge || 0),
-              warningThreshold: roundMoney(account.warningThreshold || 0),
-              warningEnabled: account.warningEnabled !== false,
-              warningMode: account.warningMode || "balance",
-              warningCooldownHours: roundMoney(account.warningCooldownHours || 24),
-              warningChannel: account.warningChannel || "wxpusher",
-              warningLastNotifiedAt: account.warningLastNotifiedAt || ""
-            };
+            return serializeAccount(account);
           })
+        };
+      }
+
+      function serializeAccountDefaults(defaults) {
+        var output = {};
+        Object.keys(defaults || {}).forEach(function (id) {
+          output[id] = serializeAccount(defaults[id]);
+        });
+        return output;
+      }
+
+      function serializeAccount(account) {
+        return {
+          id: account.id,
+          carrier: account.carrier,
+          type: account.type,
+          number: account.number,
+          billingType: account.billingType,
+          balance: roundMoney(account.balance),
+          lastSettledDate: account.lastSettledDate,
+          monthlyCharge: roundMoney(account.monthlyCharge || 0),
+          dailyCharge: roundMoney(account.dailyCharge || 0),
+          warningThreshold: roundMoney(account.warningThreshold || 0),
+          warningEnabled: account.warningEnabled !== false,
+          warningMode: account.warningMode || "balance",
+          warningCooldownHours: roundMoney(account.warningCooldownHours || 24),
+          warningChannel: account.warningChannel || "wxpusher",
+          warningLastNotifiedAt: account.warningLastNotifiedAt || ""
         };
       }
 
@@ -453,6 +481,7 @@
             lastUpdated: remoteData.lastUpdated || row.updated_at || (baseState && baseState.lastUpdated),
             modifiedAt: remoteData.modifiedAt || remoteData.lastUpdated || row.updated_at || (baseState && baseState.modifiedAt),
             openCarriers: (baseState && baseState.openCarriers) || cloneDefault().openCarriers,
+            accountDefaults: remoteData.accountDefaults || (baseState && baseState.accountDefaults),
             accounts: remoteData.accounts
           });
         }
@@ -875,10 +904,15 @@
         });
       }
 
-      function defaultAccountById(id) {
+      function builtInDefaultAccountById(id) {
         return DEFAULT_STATE.accounts.find(function (account) {
           return account.id === id;
         });
+      }
+
+      function defaultAccountById(id) {
+        var account = (state.accountDefaults && state.accountDefaults[id]) || builtInDefaultAccountById(id);
+        return account ? JSON.parse(JSON.stringify(account)) : null;
       }
 
       function computedAccounts() {
@@ -1127,10 +1161,7 @@
         renderHome();
       }
 
-      function saveSettings() {
-        var account = accountById(activeAccountId);
-        if (!account) return;
-
+      function readSettingsForm() {
         var balance = Number(els.balanceInput.value);
         var charge = Number(els.chargeInput.value);
         var warning = Number(els.warningInput.value);
@@ -1141,19 +1172,39 @@
         if (!Number.isFinite(warning) || warning < 0) return showToast("请输入有效预警阈值");
         if (!Number.isFinite(cooldown) || cooldown < 1) return showToast("请输入有效提醒间隔");
 
-        account.balance = roundMoney(balance);
+        return {
+          balance: roundMoney(balance),
+          charge: roundMoney(charge),
+          warningThreshold: roundMoney(warning),
+          warningEnabled: Boolean(els.warningEnabledInput && els.warningEnabledInput.checked),
+          warningMode: els.warningModeInput && els.warningModeInput.value === "days" ? "days" : "balance",
+          warningCooldownHours: Math.max(1, Math.round(cooldown)),
+          warningChannel: els.warningChannelInput ? els.warningChannelInput.value : "wxpusher"
+        };
+      }
+
+      function applySettingsToAccount(account, values) {
+        account.balance = values.balance;
         if (account.billingType === "daily") {
-          account.dailyCharge = roundMoney(charge);
+          account.dailyCharge = values.charge;
         } else {
-          account.monthlyCharge = roundMoney(charge);
+          account.monthlyCharge = values.charge;
         }
-        account.warningThreshold = roundMoney(warning);
-        account.warningEnabled = Boolean(els.warningEnabledInput && els.warningEnabledInput.checked);
-        account.warningMode = els.warningModeInput && els.warningModeInput.value === "days" ? "days" : "balance";
-        account.warningCooldownHours = Math.max(1, Math.round(cooldown));
-        account.warningChannel = els.warningChannelInput ? els.warningChannelInput.value : "wxpusher";
+        account.warningThreshold = values.warningThreshold;
+        account.warningEnabled = values.warningEnabled;
+        account.warningMode = values.warningMode;
+        account.warningCooldownHours = values.warningCooldownHours;
+        account.warningChannel = values.warningChannel;
         account.warningLastNotifiedAt = "";
         account.lastSettledDate = addDays(todayKey(), -1);
+      }
+
+      function saveSettings() {
+        var account = accountById(activeAccountId);
+        var values = readSettingsForm();
+        if (!account || !values) return;
+
+        applySettingsToAccount(account, values);
         var now = new Date().toISOString();
         state.lastUpdated = now;
         state.modifiedAt = now;
@@ -1161,6 +1212,24 @@
         flushCloudPush(false);
         render();
         showToast("设置已保存");
+      }
+
+      function setCurrentAsDefault() {
+        var account = accountById(activeAccountId);
+        var values = readSettingsForm();
+        if (!account || !values) return;
+
+        var fallback = builtInDefaultAccountById(account.id) || account;
+        var nextDefault = normalizeAccount(Object.assign({}, fallback, account), fallback);
+        applySettingsToAccount(nextDefault, values);
+        state.accountDefaults = state.accountDefaults || {};
+        state.accountDefaults[account.id] = nextDefault;
+        var now = new Date().toISOString();
+        state.lastUpdated = now;
+        state.modifiedAt = now;
+        saveState();
+        flushCloudPush(false);
+        showToast("当前配置已设为默认值");
       }
 
       function addRecharge() {
@@ -1191,7 +1260,8 @@
         Object.keys(fallback).forEach(function (key) {
           account[key] = fallback[key];
         });
-        applyDefaultWarningSettings(account, fallback);
+        account.lastSettledDate = addDays(todayKey(), -1);
+        applyDefaultWarningSettings(account, builtInDefaultAccountById(activeAccountId) || fallback);
         var now = new Date().toISOString();
         state.lastUpdated = now;
         state.modifiedAt = now;
@@ -1243,6 +1313,9 @@
       }
       els.saveBtn.addEventListener("click", saveSettings);
       els.resetAccountBtn.addEventListener("click", resetCurrentAccount);
+      if (els.setDefaultBtn) {
+        els.setDefaultBtn.addEventListener("click", setCurrentAsDefault);
+      }
       if (els.warningModeInput) {
         els.warningModeInput.addEventListener("change", updateWarningInputLabel);
       }

@@ -96,7 +96,7 @@
           <p class="notify-summary" id="notifySummary"></p>
         </article>
 
-        <details class="card rule-card charge-detail-panel" open>
+        <details class="card rule-card charge-detail-panel">
           <summary>本月扣费明细</summary>
           <div class="charge-detail-body">
             <div class="detail-table">
@@ -180,7 +180,10 @@
               </select>
             </div>
             <div class="form-actions">
-              <button type="button" class="link danger-link" id="resetAccountBtn">恢复此账号默认</button>
+              <div class="reset-actions">
+                <button type="button" class="link danger-link" id="resetAccountBtn">恢复此账号默认</button>
+                <button type="button" class="link muted-link" id="setDefaultBtn">将当前设置设为默认值</button>
+              </div>
               <button type="button" class="primary-action" id="saveBtn">保存设置</button>
             </div>
             <p>保存余额后会把该账号的计算基准设为昨天，保证今天不会重复扣费。通知规则也会随账号一起保存，后续接入 WxPusher / Supabase 后可直接按该规则推送。</p>

@@ -1081,36 +1081,53 @@
       padding-top: 2px;
     }
 
-    .toggle-line {
+    .field .toggle-line {
+      width: 100%;
       min-height: 46px;
-      display: grid;
-      grid-template-columns: minmax(0, 1fr) auto;
+      position: relative;
+      display: flex;
       align-items: center;
-      gap: 14px;
       margin-bottom: 0;
       border: 1px solid var(--line);
       border-radius: var(--radius);
       background: var(--card-soft);
-      padding: 0 12px 0 14px;
+      padding: 0 48px 0 14px;
     }
 
-    .toggle-line span {
+    .field .toggle-line span {
       display: block;
+      min-width: 0;
       line-height: 1.35;
       font-size: 14px;
       font-weight: 800;
     }
 
-    .toggle-line input[type="checkbox"] {
+    .field .toggle-line input[type="checkbox"] {
+      position: absolute;
+      right: 14px;
+      top: 50%;
       width: 20px;
       height: 20px;
       min-height: 20px;
       margin: 0;
       padding: 0;
-      justify-self: end;
-      align-self: center;
+      transform: translateY(-50%);
       accent-color: var(--brand);
       box-shadow: none;
+    }
+
+    .reset-actions {
+      flex: 0 0 auto;
+      display: grid;
+      gap: 16px;
+      justify-items: start;
+    }
+
+    button.muted-link {
+      min-height: auto;
+      padding: 0;
+      color: var(--subtle);
+      font-size: 12px;
     }
 
     .form-actions {
