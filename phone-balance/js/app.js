@@ -371,6 +371,10 @@
         return year + "-" + pad(month) + "-" + pad(day);
       }
 
+      function dateKeyFromDate(date) {
+        return dateKey(date.getUTCFullYear(), date.getUTCMonth() + 1, date.getUTCDate());
+      }
+
       function partsFromKey(key) {
         var parts = String(key).split("-").map(Number);
         return { year: parts[0], month: parts[1], day: parts[2] };
@@ -442,6 +446,69 @@
         var date = new Date(value);
         if (Number.isNaN(date.getTime())) date = new Date();
         return pad(date.getMonth() + 1) + "-" + pad(date.getDate()) + " " + pad(date.getHours()) + ":" + pad(date.getMinutes());
+      }
+
+      function monthDayText(key) {
+        var parts = partsFromKey(key);
+        return parts.month + "月" + parts.day + "日";
+      }
+
+      function endOfMonthKey(key) {
+        var parts = partsFromKey(key);
+        return dateKeyFromDate(new Date(Date.UTC(parts.year, parts.month, 0)));
+      }
+
+      function endOfMonthOffsetKey(key, offset) {
+        var parts = partsFromKey(key);
+        return dateKeyFromDate(new Date(Date.UTC(parts.year, parts.month + offset, 0)));
+      }
+
+      function daysUntilKey(fromKey, toKey) {
+        var fromParts = partsFromKey(fromKey);
+        var toParts = partsFromKey(toKey);
+        var fromTime = Date.UTC(fromParts.year, fromParts.month - 1, fromParts.day);
+        var toTime = Date.UTC(toParts.year, toParts.month - 1, toParts.day);
+        return Math.max(0, Math.round((toTime - fromTime) / 86400000));
+      }
+
+      function billingStandardText(account, dailyFee) {
+        if (account.billingType === "daily") {
+          return "日费 ¥" + money(account.dailyCharge, 2) + "/天，每日结算";
+        }
+
+        if (account.billingType === "monthEnd") {
+          return "月费 ¥" + money(account.monthlyCharge, 2) + "/月，月末一次扣费";
+        }
+
+        return "月费 ¥" + money(account.monthlyCharge, 2) + "/月，按当月天数折算为 ¥" + money(dailyFee, 3) + "/天";
+      }
+
+      function monthEndProjection(account, today) {
+        var monthlyCharge = safeNumber(account.monthlyCharge, 0);
+        var balance = roundMoney(account.balance);
+        var fullMonthsSupported = monthlyCharge > 0 ? Math.max(0, Math.floor(balance / monthlyCharge)) : 0;
+        var nextChargeDate = endOfMonthKey(today);
+        var attentionDate = endOfMonthOffsetKey(today, fullMonthsSupported);
+        var postChargeBalance = roundMoney(balance - monthlyCharge);
+
+        return {
+          fullMonthsSupported: fullMonthsSupported,
+          nextChargeDate: nextChargeDate,
+          attentionDate: attentionDate,
+          postChargeBalance: postChargeBalance
+        };
+      }
+
+      function chargeRuleText(account, data) {
+        if (account.billingType === "daily") {
+          return "按日扣费：每天结束后扣 ¥" + money(account.dailyCharge, 2) + "。";
+        }
+
+        if (account.billingType === "monthEnd") {
+          return "月末扣费：每月最后一天一次扣 ¥" + money(account.monthlyCharge, 2) + "。";
+        }
+
+        return "按月折算：每月固定扣 ¥" + money(account.monthlyCharge, 2) + "，本月按每天 ¥" + money(data.dailyFee, 3) + " 结算。";
       }
 
       function timeValue(value) {
@@ -743,33 +810,6 @@
         }
       }
 
-      function computeAccount(account) {
-        var today = todayKey();
-        var todayParts = partsFromKey(today);
-        var monthDays = daysInMonthFor(todayParts.year, todayParts.month);
-        var settledDays = account.billingType === "monthEnd" ? 0 : Math.max(0, todayParts.day - 1);
-        var dailyFee = dailyFeeFor(account, today);
-        var estimate = estimateUsage(account.balance, account, today);
-
-        return {
-          id: account.id,
-          carrier: account.carrier,
-          type: account.type,
-          number: account.number,
-          balance: roundMoney(account.balance),
-          dailyFee: dailyFee,
-          monthSettledFee: monthSettledFeeFor(account, today),
-          monthDays: monthDays,
-          settledDays: settledDays,
-          daysLeft: estimate.days,
-          until: estimate.until,
-          warning: account.balance < account.warningThreshold,
-          warningText: account.balance < 0
-            ? "当前已欠费 ¥" + money(Math.abs(account.balance), 2)
-            : "余额低于预警阈值 ¥" + money(account.warningThreshold, 2)
-        };
-      }
-
       function estimateUsage(balance, account, startKey) {
         if (balance <= 0) return { days: 0, until: startKey };
         var remaining = balance;
@@ -800,7 +840,7 @@
         }
 
         if (account.warningMode === "days") {
-          return "预计可用天数低于 " + trimNumber(account.warningThreshold) + " 天时触发提醒，默认 " + trimNumber(account.warningCooldownHours || 24) + " 小时内不重复提醒。";
+          return "预计可用时间低于 " + trimNumber(account.warningThreshold) + " 天时触发提醒，默认 " + trimNumber(account.warningCooldownHours || 24) + " 小时内不重复提醒。";
         }
 
         return "余额低于 ¥" + money(account.warningThreshold, 2) + " 时触发提醒，默认 " + trimNumber(account.warningCooldownHours || 24) + " 小时内不重复提醒。";
@@ -809,6 +849,7 @@
       function warningStatus(account, data) {
         var mode = normalizeWarningMode(account.warningMode);
         var threshold = safeNumber(account.warningThreshold, 0);
+        var comparableDays = typeof data.attentionDays === "number" ? data.attentionDays : data.daysLeft;
         var triggered = false;
         var reason = "";
 
@@ -824,12 +865,12 @@
         }
 
         if (mode === "days") {
-          triggered = data.daysLeft <= threshold;
+          triggered = comparableDays <= threshold;
           reason = triggered
-            ? (data.daysLeft > 0
-              ? "预计仅剩约 " + data.daysLeft + " 天，已低于 " + trimNumber(threshold) + " 天提醒线"
+            ? (comparableDays > 0
+              ? "预计仅剩约 " + comparableDays + " 天，已低于 " + trimNumber(threshold) + " 天提醒线"
               : "预计可用时间已不足 1 天")
-            : "预计可用约 " + data.daysLeft + " 天";
+            : "预计可用约 " + comparableDays + " 天";
         } else {
           triggered = data.balance <= threshold;
           reason = triggered
@@ -861,9 +902,18 @@
         var settledDays = account.billingType === "monthEnd" ? 0 : Math.max(0, todayParts.day - 1);
         var dailyFee = dailyFeeFor(account, today);
         var estimate = estimateUsage(account.balance, account, today);
+        var monthEndInfo = account.billingType === "monthEnd" ? monthEndProjection(account, today) : null;
+        var attentionDate = monthEndInfo ? monthEndInfo.attentionDate : estimate.until;
+        var attentionDays = monthEndInfo ? daysUntilKey(today, attentionDate) : estimate.days;
+        var statusLabel = monthEndInfo
+          ? (monthEndInfo.fullMonthsSupported > 0
+            ? "可撑 " + monthEndInfo.fullMonthsSupported + " 个整月"
+            : "本月末需关注")
+          : (estimate.days > 0 ? "约 " + estimate.days + " 天" : "不足 1 天");
         var status = warningStatus(account, {
           balance: roundMoney(account.balance),
-          daysLeft: estimate.days
+          daysLeft: attentionDays,
+          attentionDays: attentionDays
         });
 
         return {
@@ -876,8 +926,19 @@
           monthSettledFee: monthSettledFeeFor(account, today),
           monthDays: monthDays,
           settledDays: settledDays,
-          daysLeft: estimate.days,
-          until: estimate.until,
+          daysLeft: attentionDays,
+          until: attentionDate,
+          estimatedUsageDays: estimate.days,
+          estimatedUsageUntil: estimate.until,
+          nextChargeDate: monthEndInfo ? monthEndInfo.nextChargeDate : "",
+          fullMonthsSupported: monthEndInfo ? monthEndInfo.fullMonthsSupported : 0,
+          postChargeBalance: monthEndInfo ? monthEndInfo.postChargeBalance : roundMoney(account.balance - dailyFee),
+          feeStandardText: billingStandardText(account, dailyFee),
+          chargeRuleText: chargeRuleText(account, { dailyFee: dailyFee }),
+          attentionLabel: statusLabel,
+          attentionMeta: monthEndInfo
+            ? ("下次扣费 " + monthDayText(monthEndInfo.nextChargeDate))
+            : (estimate.days > 0 ? ("至 " + readableDate(estimate.until)) : "今日用完后将触发扣费"),
           warning: status.triggered,
           warningMode: status.mode,
           warningThreshold: status.threshold,
@@ -934,10 +995,10 @@
         });
         var soonest = items.reduce(function (best, item) {
           if (!best) return item;
-          if (item.data.daysLeft !== best.data.daysLeft) {
-            return item.data.daysLeft < best.data.daysLeft ? item : best;
+          if (compareKeys(item.data.until, best.data.until) !== 0) {
+            return compareKeys(item.data.until, best.data.until) < 0 ? item : best;
           }
-          return compareKeys(item.data.until, best.data.until) < 0 ? item : best;
+          return item.data.balance < best.data.balance ? item : best;
         }, null);
 
         return {
@@ -998,16 +1059,24 @@
       function renderOverview(stats) {
         var warningCount = stats.warnings.length;
         var soonest = stats.soonest;
+        var soonestLabel = els.overviewSoonest && els.overviewSoonest.parentNode ? els.overviewSoonest.parentNode.querySelector("span") : null;
+        var soonestTitle = soonest ? (CARRIERS[soonest.account.carrier].name + " · " + soonest.account.number) : "";
+        var soonestDate = soonest ? (soonest.data.until ? readableDate(soonest.data.until) : "今天") : "--";
 
         els.overviewBalance.textContent = money(stats.total, 2);
         els.overviewAccounts.textContent = stats.accountCount + " 个";
         els.overviewWarningTag.textContent = warningCount > 0 ? warningCount + " 个预警" : "全部正常";
-        els.overviewSoonest.textContent = soonest
-          ? (soonest.data.daysLeft > 0 ? readableDate(soonest.data.until) : "今天")
+        if (soonestLabel) {
+          soonestLabel.textContent = "最早需要关注";
+        }
+        els.overviewSoonest.innerHTML = soonest
+          ? ('<span class="soonest-main">' + escapeHtml(soonestDate) + '</span><small>' + escapeHtml(soonestTitle) + '</small>')
           : "--";
         els.overviewNote.textContent = warningCount > 0
-          ? "已有账号触发当前提醒规则，建议优先查看预警账号。"
-          : "当日费用尚未扣除，页面只根据本地保存余额进行估算。";
+          ? "已有账号触发提醒规则，建议优先查看预警账号；本页仅做本地估算，不代表运营商实时余额。"
+          : (soonest
+            ? ("最早需要关注的是 " + CARRIERS[soonest.account.carrier].name + " " + soonest.account.number + "，页面仅做本地估算。")
+            : "当日费用尚未扣除，页面只根据本地保存余额进行估算。");
         els.overviewCard.classList.toggle("warning", warningCount > 0);
       }
 
@@ -1015,7 +1084,7 @@
         var warnings = items.filter(function (item) {
           return item.data.warning;
         }).sort(function (a, b) {
-          if (a.data.daysLeft !== b.data.daysLeft) return a.data.daysLeft - b.data.daysLeft;
+          if (compareKeys(a.data.until, b.data.until) !== 0) return compareKeys(a.data.until, b.data.until);
           return a.data.balance - b.data.balance;
         });
 
@@ -1027,12 +1096,11 @@
         }
 
         els.warningList.innerHTML = warnings.map(function (item) {
-          var daysText = item.data.daysLeft > 0 ? "约 " + item.data.daysLeft + " 天" : "不足 1 天";
           return ''
             + '<div class="warning-item" style="--carrier-color:' + item.carrier.color + '">'
             + '  <div>'
             + '    <strong>' + escapeHtml(item.account.number) + '</strong>'
-            + '    <span>' + escapeHtml(item.carrier.name) + ' · ' + escapeHtml(item.account.type) + ' · ' + daysText + '</span>'
+            + '    <span>' + escapeHtml(item.carrier.name) + ' · ' + escapeHtml(item.account.type) + ' · ' + escapeHtml(item.data.attentionLabel) + ' · ' + escapeHtml(item.data.feeStandardText) + '</span>'
             + '  </div>'
             + '  <button class="detail-btn" type="button" data-action="detail" data-id="' + escapeHtml(item.account.id) + '">详情</button>'
             + '</div>';
@@ -1042,16 +1110,15 @@
       function renderAccountRow(account) {
         var carrier = CARRIERS[account.carrier];
         var data = computeAccount(account);
-        var daysText = data.daysLeft > 0 ? "约 " + data.daysLeft + " 天" : "不足 1 天";
         return ''
           + '<div class="account-row' + (data.warning ? " warning" : "") + '" style="--carrier-color:' + carrier.color + '">'
           + '  <div>'
           + '    <h3 class="number">' + escapeHtml(account.number) + '</h3>'
-          + '    <p>' + escapeHtml(account.type) + ' · ' + escapeHtml(carrier.name) + '</p>'
+          + '    <p>' + escapeHtml(account.type) + ' · ' + escapeHtml(carrier.name) + ' · ' + escapeHtml(data.feeStandardText) + '</p>'
           + '    <div class="row-money money">¥' + money(data.balance, 2) + '</div>'
           + '  </div>'
           + '  <div class="row-side">'
-          + '    <span class="days-chip' + (data.warning ? " warning" : "") + '">' + (data.warning ? "预警 · " : "") + daysText + '</span>'
+          + '    <span class="days-chip' + (data.warning ? " warning" : "") + '">' + (data.warning ? "预警 · " : "") + escapeHtml(data.attentionLabel) + '</span>'
           + '    <button class="detail-btn" type="button" data-action="detail" data-id="' + escapeHtml(account.id) + '">详情</button>'
           + '  </div>'
           + '</div>';
@@ -1068,6 +1135,10 @@
         var account = accountById(accountId) || state.accounts[0];
         var carrier = CARRIERS[account.carrier];
         var data = computeAccount(account);
+        var primaryMetricLabel = els.detailDaysLeft && els.detailDaysLeft.parentNode ? els.detailDaysLeft.parentNode.querySelector("span") : null;
+        var primaryMetricSubline = els.detailUntil && els.detailUntil.parentNode ? els.detailUntil.parentNode : null;
+        var dailyFeeLabel = els.dailyFee ? els.dailyFee.previousElementSibling : null;
+        var chargeDetailHint = document.querySelector(".charge-detail-body p");
 
         activeAccountId = account.id;
         els.detailPage.style.setProperty("--carrier-color", carrier.color);
@@ -1076,14 +1147,32 @@
         els.detailTitle.textContent = account.number;
         els.detailAccount.textContent = carrier.name + " · " + account.type;
         els.detailBalance.textContent = money(data.balance, 2);
-        els.detailDaysLeft.textContent = data.daysLeft > 0 ? "约 " + data.daysLeft + " 天" : "不足 1 天";
-        els.detailUntil.textContent = data.daysLeft > 0 ? readableDate(data.until) : "今天";
-        els.dailyFee.textContent = account.billingType === "monthEnd" ? "月末一次扣款" : "¥" + money(data.dailyFee, 3);
+        if (primaryMetricLabel) {
+          primaryMetricLabel.textContent = account.billingType === "monthEnd" ? "可撑完整月租" : "预计可用";
+        }
+        els.detailDaysLeft.textContent = account.billingType === "monthEnd"
+          ? (data.fullMonthsSupported + " 个")
+          : (data.estimatedUsageDays > 0 ? "约 " + data.estimatedUsageDays + " 天" : "不足 1 天");
+        if (primaryMetricSubline) {
+          primaryMetricSubline.childNodes[0].nodeValue = account.billingType === "monthEnd" ? "下次扣费 " : "至 ";
+        }
+        els.detailUntil.textContent = account.billingType === "monthEnd"
+          ? readableDate(data.nextChargeDate)
+          : (data.estimatedUsageDays > 0 ? readableDate(data.estimatedUsageUntil) : "今天");
+        if (dailyFeeLabel) {
+          dailyFeeLabel.textContent = account.billingType === "monthEnd" ? "计费方式" : "每日扣费金额";
+        }
+        els.dailyFee.textContent = account.billingType === "monthEnd" ? data.feeStandardText : "¥" + money(data.dailyFee, 3);
         els.monthSettledFee.textContent = "¥" + money(data.monthSettledFee, 2);
         els.daysInMonth.textContent = data.monthDays + " 天";
         els.settledDays.textContent = data.settledDays + " 天";
         els.chargeLabel.textContent = account.billingType === "daily" ? "每日固定扣款额" : (account.billingType === "monthEnd" ? "月末固定扣款额" : "月固定扣款额");
         els.fixedCharge.textContent = account.billingType === "daily" ? "¥" + money(account.dailyCharge, 2) : "¥" + money(account.monthlyCharge, 2);
+        if (chargeDetailHint) {
+          chargeDetailHint.textContent = account.billingType === "monthEnd"
+            ? ("当前余额可支撑 " + data.fullMonthsSupported + " 个完整月租，下次扣费日为 " + readableDate(data.nextChargeDate) + "。")
+            : data.chargeRuleText;
+        }
         els.warningText.textContent = data.warningText;
         els.balancePanel.classList.remove("risk-blue", "risk-green", "risk-orange", "risk-red");
         els.balancePanel.classList.add(balanceRiskClass(data));
