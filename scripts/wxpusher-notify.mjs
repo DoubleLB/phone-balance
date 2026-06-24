@@ -120,25 +120,54 @@ function estimateUsage(balance, account, startKey) {
   };
 }
 
+function endOfMonthKey(key) {
+  const parts = partsFromKey(key);
+  return dateKeyFromDate(new Date(Date.UTC(parts.year, parts.month, 0)));
+}
+
+function monthEndProjection(account, today) {
+  const monthlyCharge = safeNumber(account.monthlyCharge, 0);
+  const balance = roundMoney(safeNumber(account.balance, 0));
+  const fullMonthsSupported = monthlyCharge > 0 ? Math.max(0, Math.floor(balance / monthlyCharge)) : 0;
+  const nextChargeDate = endOfMonthKey(today);
+  const postChargeBalance = roundMoney(balance - monthlyCharge);
+
+  return {
+    fullMonthsSupported,
+    nextChargeDate,
+    postChargeBalance
+  };
+}
+
 function warningStatus(account, today) {
   const settledBalance = roundMoney(safeNumber(account.balance, 0));
   const estimate = estimateUsage(settledBalance, account, today);
   const enabled = account.warningEnabled !== false;
-  const mode = account.warningMode === "days" ? "days" : "balance";
+  const mode = account.warningMode === "days" || account.warningMode === "afterCharge" ? account.warningMode : "balance";
   const threshold = safeNumber(account.warningThreshold, mode === "days" ? 30 : 10);
+  const monthEndInfo = account.billingType === "monthEnd" ? monthEndProjection(account, today) : null;
+  const postChargeBalance = monthEndInfo ? monthEndInfo.postChargeBalance : roundMoney(settledBalance - safeNumber(account.dailyCharge, 0));
   const triggered = enabled
-    ? (mode === "days" ? estimate.days <= threshold : settledBalance <= threshold)
+    ? (mode === "days"
+      ? estimate.days <= threshold
+      : mode === "afterCharge"
+        ? postChargeBalance <= threshold
+        : settledBalance <= threshold)
     : false;
 
   let reason = "";
   if (!enabled) {
     reason = "提醒已关闭";
   } else if (mode === "days") {
-    reason = `预计可用 ${estimate.days} 天，阈值 ${threshold} 天`;
+    reason = `预计可用 ${estimate.days} 天，低于 ${threshold} 天阈值`;
+  } else if (mode === "afterCharge") {
+    reason = postChargeBalance < 0
+      ? `下次扣费后预计欠费 ¥${Math.abs(postChargeBalance).toFixed(2)}`
+      : `下次扣费后预计余额 ¥${postChargeBalance.toFixed(2)}`;
   } else {
     reason = settledBalance < 0
       ? `当前欠费 ${Math.abs(settledBalance).toFixed(2)} 元`
-      : `当前余额 ${settledBalance.toFixed(2)} 元，阈值 ${threshold.toFixed(2)} 元`;
+      : `当前余额 ${settledBalance.toFixed(2)} 元，低于 ${threshold.toFixed(2)} 元阈值`;
   }
 
   return {
@@ -148,6 +177,9 @@ function warningStatus(account, today) {
     triggered,
     daysLeft: estimate.days,
     until: estimate.until,
+    postChargeBalance,
+    fullMonthsSupported: monthEndInfo ? monthEndInfo.fullMonthsSupported : 0,
+    nextChargeDate: monthEndInfo ? monthEndInfo.nextChargeDate : "",
     reason,
     cooldownHours: Math.max(1, safeNumber(account.warningCooldownHours, 24))
   };
@@ -172,17 +204,21 @@ function shouldSendBackgroundNotification(account) {
 function buildTextPayload(account, status) {
   const type = account.type || "账号";
   const carrier = account.carrier || "运营商";
-  const balanceText = status.mode === "balance"
-    ? `余额 ${roundMoney(account.balance).toFixed(2)} 元`
-    : `预计可用 ${status.daysLeft} 天`;
+  const balanceText = status.mode === "afterCharge"
+    ? `扣费后预计 ${status.postChargeBalance.toFixed(2)} 元`
+    : status.mode === "balance"
+      ? `余额 ${roundMoney(account.balance).toFixed(2)} 元`
+      : `预计可用 ${status.daysLeft} 天`;
 
   return {
-    title: `余额提醒｜${carrier} ${account.number}`,
+    title: `余额提醒 · ${carrier} ${account.number}`,
     lines: [
       `${carrier} ${account.number} (${type})`,
       balanceText,
       status.reason,
-      `预计可用至 ${formatChinaDate(status.until)}`,
+      status.mode === "afterCharge" && status.nextChargeDate
+        ? `下次扣费日 ${formatChinaDate(status.nextChargeDate)}`
+        : `预计可用至 ${formatChinaDate(status.until)}`,
       `检查时间 ${new Date().toLocaleString("zh-CN", { hour12: false, timeZone: "Asia/Shanghai" })}`
     ]
   };

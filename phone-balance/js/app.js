@@ -266,6 +266,17 @@
           };
         }
 
+        if (account && account.billingType === "monthEnd") {
+          return {
+            warningEnabled: true,
+            warningMode: "afterCharge",
+            warningThreshold: 10,
+            warningCooldownHours: 24,
+            warningChannel: "wxpusher",
+            warningLastNotifiedAt: ""
+          };
+        }
+
         return {
           warningEnabled: true,
           warningMode: "days",
@@ -277,7 +288,9 @@
       }
 
       function normalizeWarningMode(value, fallback) {
-        return value === "days" ? "days" : "balance";
+        if (value === "balance" || value === "days" || value === "afterCharge") return value;
+        if (fallback === "balance" || fallback === "days" || fallback === "afterCharge") return fallback;
+        return "balance";
       }
 
       function normalizeWarningChannel(value, fallback) {
@@ -631,6 +644,59 @@
         return remoteTime > localTime;
       }
 
+      function checkCloudWriteConflict() {
+        if (!isCloudConfigured()) return Promise.resolve(false);
+        if (cloudBusy) {
+          showToast("云端同步中，请稍后再保存");
+          return Promise.resolve(true);
+        }
+
+        cloudBusy = true;
+        renderSyncStatus("busy", "正在检查云端数据。");
+
+        var localState = normalizeState(cloneStateSnapshot(state));
+        var url = cloudEndpoint()
+          + "?id=eq." + encodeURIComponent(CLOUD_SYNC.rowId)
+          + "&select=id,data,updated_at";
+
+        return fetch(url, { headers: cloudHeaders() })
+          .then(function (response) {
+            if (!response.ok) throw new Error("云端检查失败 " + response.status);
+            return response.json();
+          })
+          .then(function (rows) {
+            var row = rows && rows[0];
+            var remoteState = decodeRemoteState(row, localState);
+            cloudReady = true;
+
+            if (remoteState && isRemoteNewer(remoteState, localState)) {
+              state = remoteState;
+              settleAll();
+              saveState();
+              render();
+              renderSyncStatus("ready", "检测到云端新数据，已先同步。", row.updated_at || remoteState.modifiedAt);
+              showToast("云端有更新，请重新保存");
+              return true;
+            }
+
+            renderSyncStatus("ready", "云端数据已确认。", row && (row.updated_at || (row.data && row.data.modifiedAt)));
+            return false;
+          })
+          .catch(function (error) {
+            renderSyncStatus("error", error.message || "云端检查失败，保留本地操作。");
+            return false;
+          })
+          .finally(function () {
+            cloudBusy = false;
+          });
+      }
+
+      function runAfterCloudWriteCheck(callback) {
+        checkCloudWriteConflict().then(function (blocked) {
+          if (!blocked) callback();
+        });
+      }
+
       function scheduleCloudPush(delay) {
         if (!cloudReady || !isCloudConfigured()) return;
         window.clearTimeout(pushTimer);
@@ -831,12 +897,17 @@
       }
 
       function warningThresholdLabel(mode) {
+        if (mode === "afterCharge") return "扣费后余额预警阈值（元）";
         return mode === "days" ? "预计可用天数阈值（天）" : "余额预警阈值（元）";
       }
 
       function warningRuleText(account) {
         if (account.warningEnabled === false) {
           return "当前账号已关闭提醒规则。";
+        }
+
+        if (account.warningMode === "afterCharge") {
+          return "下次扣费后余额低于 ¥" + money(account.warningThreshold, 2) + " 时触发提醒，默认 " + trimNumber(account.warningCooldownHours || 24) + " 小时内不重复提醒。";
         }
 
         if (account.warningMode === "days") {
@@ -864,7 +935,15 @@
           };
         }
 
-        if (mode === "days") {
+        if (mode === "afterCharge") {
+          var postChargeBalance = typeof data.postChargeBalance === "number" ? data.postChargeBalance : data.balance;
+          triggered = postChargeBalance <= threshold;
+          reason = triggered
+            ? (postChargeBalance < 0
+              ? "下次扣费后预计欠费 ¥" + money(Math.abs(postChargeBalance), 2)
+              : "下次扣费后余额将低于提醒线 ¥" + money(threshold, 2))
+            : "下次扣费后预计余额 ¥" + money(postChargeBalance, 2);
+        } else if (mode === "days") {
           triggered = comparableDays <= threshold;
           reason = triggered
             ? (comparableDays > 0
@@ -913,7 +992,8 @@
         var status = warningStatus(account, {
           balance: roundMoney(account.balance),
           daysLeft: attentionDays,
-          attentionDays: attentionDays
+          attentionDays: attentionDays,
+          postChargeBalance: monthEndInfo ? monthEndInfo.postChargeBalance : roundMoney(account.balance - dailyFee)
         });
 
         return {
@@ -1170,7 +1250,7 @@
         els.fixedCharge.textContent = account.billingType === "daily" ? "¥" + money(account.dailyCharge, 2) : "¥" + money(account.monthlyCharge, 2);
         if (chargeDetailHint) {
           chargeDetailHint.textContent = account.billingType === "monthEnd"
-            ? ("当前余额可支撑 " + data.fullMonthsSupported + " 个完整月租，下次扣费日为 " + readableDate(data.nextChargeDate) + "。")
+            ? ("当前余额可支撑 " + data.fullMonthsSupported + " 个完整月租，下次扣费日为 " + readableDate(data.nextChargeDate) + "，扣费后预计余额 ¥" + money(data.postChargeBalance, 2) + "。")
             : data.chargeRuleText;
         }
         els.warningText.textContent = data.warningText;
@@ -1181,7 +1261,7 @@
         els.chargeInput.value = account.billingType === "daily" ? trimNumber(account.dailyCharge) : trimNumber(account.monthlyCharge);
         els.warningInput.value = trimNumber(account.warningThreshold);
         els.warningEnabledInput.checked = account.warningEnabled !== false;
-        els.warningModeInput.value = account.warningMode === "days" ? "days" : "balance";
+        els.warningModeInput.value = normalizeWarningMode(account.warningMode, account.billingType === "monthEnd" ? "afterCharge" : "balance");
         els.warningCooldownInput.value = trimNumber(account.warningCooldownHours || 24);
         els.warningChannelInput.value = account.warningChannel || "wxpusher";
         updateWarningInputLabel();
@@ -1266,7 +1346,7 @@
           charge: roundMoney(charge),
           warningThreshold: roundMoney(warning),
           warningEnabled: Boolean(els.warningEnabledInput && els.warningEnabledInput.checked),
-          warningMode: els.warningModeInput && els.warningModeInput.value === "days" ? "days" : "balance",
+          warningMode: normalizeWarningMode(els.warningModeInput && els.warningModeInput.value, "balance"),
           warningCooldownHours: Math.max(1, Math.round(cooldown)),
           warningChannel: els.warningChannelInput ? els.warningChannelInput.value : "wxpusher"
         };
@@ -1289,75 +1369,88 @@
       }
 
       function saveSettings() {
-        var account = accountById(activeAccountId);
         var values = readSettingsForm();
-        if (!account || !values) return;
+        if (!values) return;
 
-        applySettingsToAccount(account, values);
-        var now = new Date().toISOString();
-        state.lastUpdated = now;
-        state.modifiedAt = now;
-        saveState();
-        flushCloudPush(false);
-        render();
-        showToast("设置已保存");
+        runAfterCloudWriteCheck(function () {
+          var account = accountById(activeAccountId);
+          if (!account) return;
+
+          applySettingsToAccount(account, values);
+          var now = new Date().toISOString();
+          state.lastUpdated = now;
+          state.modifiedAt = now;
+          saveState();
+          flushCloudPush(false);
+          render();
+          showToast("设置已保存");
+        });
       }
 
       function setCurrentAsDefault() {
-        var account = accountById(activeAccountId);
         var values = readSettingsForm();
-        if (!account || !values) return;
+        if (!values) return;
 
-        var fallback = builtInDefaultAccountById(account.id) || account;
-        var nextDefault = normalizeAccount(Object.assign({}, fallback, account), fallback);
-        applySettingsToAccount(nextDefault, values);
-        state.accountDefaults = state.accountDefaults || {};
-        state.accountDefaults[account.id] = nextDefault;
-        var now = new Date().toISOString();
-        state.lastUpdated = now;
-        state.modifiedAt = now;
-        saveState();
-        flushCloudPush(false);
-        showToast("当前配置已设为默认值");
+        runAfterCloudWriteCheck(function () {
+          var account = accountById(activeAccountId);
+          if (!account) return;
+
+          var fallback = builtInDefaultAccountById(account.id) || account;
+          var nextDefault = normalizeAccount(Object.assign({}, fallback, account), fallback);
+          applySettingsToAccount(nextDefault, values);
+          state.accountDefaults = state.accountDefaults || {};
+          state.accountDefaults[account.id] = nextDefault;
+          var now = new Date().toISOString();
+          state.lastUpdated = now;
+          state.modifiedAt = now;
+          saveState();
+          flushCloudPush(false);
+          showToast("当前配置已设为默认值");
+        });
       }
 
       function addRecharge() {
-        var account = accountById(activeAccountId);
-        if (!account) return;
-
         var amount = Number(els.rechargeAmountInput.value);
         if (!Number.isFinite(amount) || amount <= 0) return showToast("请输入有效充值金额");
 
-        account.balance = roundMoney(account.balance + amount);
-        account.lastSettledDate = addDays(todayKey(), -1);
-        var now = new Date().toISOString();
-        state.lastUpdated = now;
-        state.modifiedAt = now;
-        saveState();
-        flushCloudPush(false);
-        els.rechargeAmountInput.value = "";
-        render();
-        showToast("充值已加入余额");
+        runAfterCloudWriteCheck(function () {
+          var account = accountById(activeAccountId);
+          if (!account) return;
+
+          account.balance = roundMoney(account.balance + amount);
+          account.lastSettledDate = addDays(todayKey(), -1);
+          var now = new Date().toISOString();
+          state.lastUpdated = now;
+          state.modifiedAt = now;
+          saveState();
+          flushCloudPush(false);
+          els.rechargeAmountInput.value = "";
+          render();
+          showToast("充值已加入余额");
+        });
       }
 
       function resetCurrentAccount() {
-        var account = accountById(activeAccountId);
-        var fallback = defaultAccountById(activeAccountId);
-        if (!account || !fallback) return;
         if (!window.confirm("恢复此账号默认值会覆盖当前余额，是否继续？")) return;
 
-        Object.keys(fallback).forEach(function (key) {
-          account[key] = fallback[key];
+        runAfterCloudWriteCheck(function () {
+          var account = accountById(activeAccountId);
+          var fallback = defaultAccountById(activeAccountId);
+          if (!account || !fallback) return;
+
+          Object.keys(fallback).forEach(function (key) {
+            account[key] = fallback[key];
+          });
+          account.lastSettledDate = addDays(todayKey(), -1);
+          applyDefaultWarningSettings(account, builtInDefaultAccountById(activeAccountId) || fallback);
+          var now = new Date().toISOString();
+          state.lastUpdated = now;
+          state.modifiedAt = now;
+          saveState();
+          flushCloudPush(false);
+          render();
+          showToast("此账号已恢复默认");
         });
-        account.lastSettledDate = addDays(todayKey(), -1);
-        applyDefaultWarningSettings(account, builtInDefaultAccountById(activeAccountId) || fallback);
-        var now = new Date().toISOString();
-        state.lastUpdated = now;
-        state.modifiedAt = now;
-        saveState();
-        flushCloudPush(false);
-        render();
-        showToast("此账号已恢复默认");
       }
 
       function refreshNow(showMessage) {

@@ -8,7 +8,7 @@
   <meta name="apple-mobile-web-app-title" content="余额总览">
   <meta name="apple-mobile-web-app-status-bar-style" content="default">
   <title>余额总览</title>
-  <link rel="stylesheet" href="css/style.css">
+  <link rel="stylesheet" href="css/style.css?v=20260624-2">
 </head>
 <body>
   <main class="app">
@@ -165,6 +165,7 @@
               <select id="warningModeInput">
                 <option value="balance">余额低于阈值</option>
                 <option value="days">可用天数低于阈值</option>
+                <option value="afterCharge">扣费后余额低于阈值</option>
               </select>
             </div>
             <div class="field">
@@ -209,6 +210,6 @@
 
   <div class="toast" id="toast"></div>
 
-  <script src="js/app.js"></script>
+  <script src="js/app.js?v=20260624-2"></script>
 </body>
 </html>
