@@ -529,6 +529,35 @@
         return Number.isFinite(timestamp) ? timestamp : 0;
       }
 
+      function latestIsoValue(left, right) {
+        var leftTime = timeValue(left);
+        var rightTime = timeValue(right);
+        if (rightTime > leftTime) return right || "";
+        return left || "";
+      }
+
+      function mergeRemoteNotificationFields(localData, remoteState) {
+        if (!localData || !Array.isArray(localData.accounts) || !remoteState || !Array.isArray(remoteState.accounts)) {
+          return localData;
+        }
+
+        var remoteById = {};
+        remoteState.accounts.forEach(function (account) {
+          remoteById[account.id] = account;
+        });
+
+        localData.accounts.forEach(function (account) {
+          var remoteAccount = remoteById[account.id];
+          if (!remoteAccount) return;
+          account.warningLastNotifiedAt = latestIsoValue(
+            account.warningLastNotifiedAt,
+            remoteAccount.warningLastNotifiedAt
+          );
+        });
+
+        return localData;
+      }
+
       function stateModifiedTime(snapshot) {
         return timeValue(snapshot && (snapshot.modifiedAt || snapshot.lastUpdated));
       }
@@ -783,17 +812,32 @@
         cloudBusy = true;
         renderSyncStatus("busy", "正在保存到云端。");
 
-        var body = JSON.stringify({
-          id: CLOUD_SYNC.rowId,
-          data: serializeCloudState(state),
-          updated_at: new Date().toISOString()
-        });
+        var localSnapshot = cloneStateSnapshot(state);
+        var localData = serializeCloudState(localSnapshot);
+        var readUrl = cloudEndpoint()
+          + "?id=eq." + encodeURIComponent(CLOUD_SYNC.rowId)
+          + "&select=id,data,updated_at";
 
-        return fetch(cloudEndpoint() + "?on_conflict=id", {
-          method: "POST",
-          headers: cloudHeaders({ Prefer: "resolution=merge-duplicates,return=minimal" }),
-          body: body
-        })
+        return fetch(readUrl, { headers: cloudHeaders() })
+          .then(function (response) {
+            if (!response.ok) throw new Error("读取失败 " + response.status);
+            return response.json();
+          })
+          .then(function (rows) {
+            var row = rows && rows[0];
+            var remoteState = decodeRemoteState(row, normalizeState(localSnapshot));
+            localData = mergeRemoteNotificationFields(localData, remoteState);
+
+            return fetch(cloudEndpoint() + "?on_conflict=id", {
+              method: "POST",
+              headers: cloudHeaders({ Prefer: "resolution=merge-duplicates,return=minimal" }),
+              body: JSON.stringify({
+                id: CLOUD_SYNC.rowId,
+                data: localData,
+                updated_at: new Date().toISOString()
+              })
+            });
+          })
           .then(function (response) {
             if (!response.ok) throw new Error("保存失败 " + response.status);
             var syncedAt = new Date().toISOString();

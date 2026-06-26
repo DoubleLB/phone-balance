@@ -3,6 +3,7 @@ const CONFIG = {
   supabaseKey: process.env.SUPABASE_ANON_KEY || "sb_publishable_jg7Ht5A1SXFfkn4VZImQKA_eAHoh5uZ",
   table: process.env.SUPABASE_TABLE || "balance_state",
   rowId: process.env.SUPABASE_ROW_ID || "china_broadcasting",
+  notificationRowId: process.env.SUPABASE_NOTIFICATION_ROW_ID || `${process.env.SUPABASE_ROW_ID || "china_broadcasting"}_notifications`,
   wxPusherAppToken: process.env.WXPUSHER_APP_TOKEN || "",
   wxPusherUids: String(process.env.WXPUSHER_UIDS || "")
     .split(",")
@@ -185,11 +186,81 @@ function warningStatus(account, today) {
   };
 }
 
-function cooldownPassed(account, nowIso) {
-  const last = new Date(account.warningLastNotifiedAt || 0).getTime();
+function accountNotificationKey(account) {
+  return account.id || `${account.carrier || "account"}-${account.number || "unknown"}`;
+}
+
+function latestIso(left, right) {
+  const leftTime = new Date(left || 0).getTime();
+  const rightTime = new Date(right || 0).getTime();
+  if (!Number.isFinite(leftTime) || leftTime <= 0) return right || "";
+  if (!Number.isFinite(rightTime) || rightTime <= 0) return left || "";
+  return rightTime > leftTime ? right : left;
+}
+
+function notificationLastNotifiedAt(account, notificationState) {
+  const records = notificationState && notificationState.accounts;
+  const record = records && records[accountNotificationKey(account)];
+  return latestIso(account.warningLastNotifiedAt, record && record.warningLastNotifiedAt);
+}
+
+function cooldownPassed(account, nowIso, notificationState) {
+  const lastNotifiedAt = notificationLastNotifiedAt(account, notificationState);
+  const last = new Date(lastNotifiedAt || 0).getTime();
   if (!Number.isFinite(last) || last <= 0) return true;
   const cooldownHours = Math.max(1, safeNumber(account.warningCooldownHours, 24));
   return new Date(nowIso).getTime() - last >= cooldownHours * 3600 * 1000;
+}
+
+function createNotificationState(input) {
+  const source = input && typeof input === "object" ? input : {};
+  return {
+    schemaVersion: 1,
+    updatedAt: source.updatedAt || "",
+    accounts: source.accounts && typeof source.accounts === "object" && !Array.isArray(source.accounts)
+      ? source.accounts
+      : {}
+  };
+}
+
+function markNotificationSent(notificationState, account, nowIso, providers) {
+  const state = createNotificationState(notificationState);
+  state.accounts[accountNotificationKey(account)] = {
+    warningLastNotifiedAt: nowIso,
+    providers: providers || [],
+    number: account.number || "",
+    carrier: account.carrier || ""
+  };
+  state.updatedAt = nowIso;
+  return state;
+}
+
+function mergeAccountNotificationHistory(notificationState, accounts) {
+  const state = createNotificationState(notificationState);
+  let changed = false;
+
+  for (const account of accounts || []) {
+    const key = accountNotificationKey(account);
+    const accountLastNotifiedAt = account.warningLastNotifiedAt || "";
+    const existing = state.accounts[key] || {};
+    const latest = latestIso(existing.warningLastNotifiedAt, accountLastNotifiedAt);
+
+    if (latest && latest !== existing.warningLastNotifiedAt) {
+      state.accounts[key] = {
+        ...existing,
+        warningLastNotifiedAt: latest,
+        number: existing.number || account.number || "",
+        carrier: existing.carrier || account.carrier || ""
+      };
+      changed = true;
+    }
+  }
+
+  if (changed) {
+    state.updatedAt = new Date().toISOString();
+  }
+
+  return { state, changed };
 }
 
 function formatChinaDate(key) {
@@ -290,8 +361,8 @@ function getEnabledProviders() {
   return providers;
 }
 
-async function loadRemoteState() {
-  const url = `${CONFIG.supabaseUrl.replace(/\/+$/, "")}/rest/v1/${encodeURIComponent(CONFIG.table)}?id=eq.${encodeURIComponent(CONFIG.rowId)}&select=id,data,updated_at`;
+async function loadSupabaseRow(rowId) {
+  const url = `${CONFIG.supabaseUrl.replace(/\/+$/, "")}/rest/v1/${encodeURIComponent(CONFIG.table)}?id=eq.${encodeURIComponent(rowId)}&select=id,data,updated_at`;
   const response = await fetch(url, {
     headers: {
       apikey: CONFIG.supabaseKey,
@@ -307,7 +378,7 @@ async function loadRemoteState() {
   return rows && rows[0] ? rows[0] : null;
 }
 
-async function saveRemoteState(data) {
+async function saveSupabaseRow(rowId, data) {
   const url = `${CONFIG.supabaseUrl.replace(/\/+$/, "")}/rest/v1/${encodeURIComponent(CONFIG.table)}?on_conflict=id`;
   await requestJson(url, {
     method: "POST",
@@ -318,11 +389,28 @@ async function saveRemoteState(data) {
       Prefer: "resolution=merge-duplicates,return=minimal"
     },
     body: JSON.stringify({
-      id: CONFIG.rowId,
+      id: rowId,
       data,
       updated_at: new Date().toISOString()
     })
   });
+}
+
+async function loadRemoteState() {
+  return loadSupabaseRow(CONFIG.rowId);
+}
+
+async function loadNotificationState() {
+  const row = await loadSupabaseRow(CONFIG.notificationRowId);
+  return createNotificationState(row && row.data);
+}
+
+async function saveRemoteState(data) {
+  return saveSupabaseRow(CONFIG.rowId, data);
+}
+
+async function saveNotificationState(data) {
+  return saveSupabaseRow(CONFIG.notificationRowId, data);
 }
 
 async function sendWxPusher(payload) {
@@ -410,6 +498,10 @@ async function main() {
     return;
   }
 
+  let notificationState = await loadNotificationState();
+  const mergedNotificationHistory = mergeAccountNotificationHistory(notificationState, row.data.accounts);
+  notificationState = mergedNotificationHistory.state;
+  let notificationChanged = mergedNotificationHistory.changed;
   const today = dateKeyFromDate(new Date());
   const nowIso = new Date().toISOString();
   const state = row.data;
@@ -422,7 +514,7 @@ async function main() {
     const status = warningStatus(account, today);
     if (!status.triggered) continue;
     if (!shouldSendBackgroundNotification(account)) continue;
-    if (!cooldownPassed(account, nowIso)) continue;
+    if (!cooldownPassed(account, nowIso, notificationState)) continue;
 
     notifications.push({
       account,
@@ -430,7 +522,7 @@ async function main() {
     });
   }
 
-  if (!notifications.length && !changed) {
+  if (!notifications.length && !changed && !notificationChanged) {
     log("No changes to process.");
     return;
   }
@@ -442,6 +534,8 @@ async function main() {
       if (CONFIG.dryRun) {
         log(`[dry-run] ${item.payload.title}`);
         item.account.warningLastNotifiedAt = nowIso;
+        notificationState = markNotificationSent(notificationState, item.account, nowIso, ["dry-run"]);
+        notificationChanged = true;
         changed = true;
         continue;
       }
@@ -460,7 +554,12 @@ async function main() {
       }
 
       if (successCount > 0) {
+        const sentProviders = results
+          .filter((result) => result.ok)
+          .map((result) => result.provider);
         item.account.warningLastNotifiedAt = nowIso;
+        notificationState = markNotificationSent(notificationState, item.account, nowIso, sentProviders);
+        notificationChanged = true;
         changed = true;
       } else {
         fail(`All providers failed for ${item.account.number}.`);
@@ -478,6 +577,11 @@ async function main() {
     state.modifiedAt = nowIso;
     await saveRemoteState(state);
     log("Remote state updated.");
+  }
+
+  if (notificationChanged) {
+    await saveNotificationState(notificationState);
+    log("Notification cooldown state updated.");
   }
 }
 
