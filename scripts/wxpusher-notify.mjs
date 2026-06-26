@@ -3,7 +3,6 @@ const CONFIG = {
   supabaseKey: process.env.SUPABASE_ANON_KEY || "sb_publishable_jg7Ht5A1SXFfkn4VZImQKA_eAHoh5uZ",
   table: process.env.SUPABASE_TABLE || "balance_state",
   rowId: process.env.SUPABASE_ROW_ID || "china_broadcasting",
-  notificationRowId: process.env.SUPABASE_NOTIFICATION_ROW_ID || `${process.env.SUPABASE_ROW_ID || "china_broadcasting"}_notifications`,
   wxPusherAppToken: process.env.WXPUSHER_APP_TOKEN || "",
   wxPusherUids: String(process.env.WXPUSHER_UIDS || "")
     .split(",")
@@ -219,7 +218,9 @@ function createNotificationState(input) {
     updatedAt: source.updatedAt || "",
     accounts: source.accounts && typeof source.accounts === "object" && !Array.isArray(source.accounts)
       ? source.accounts
-      : {}
+      : source && !source.schemaVersion
+        ? source
+        : {}
   };
 }
 
@@ -261,6 +262,11 @@ function mergeAccountNotificationHistory(notificationState, accounts) {
   }
 
   return { state, changed };
+}
+
+function syncNotificationHistoryToMainState(state, notificationState) {
+  const next = createNotificationState(notificationState);
+  state.notificationHistory = next.accounts;
 }
 
 function formatChinaDate(key) {
@@ -400,17 +406,8 @@ async function loadRemoteState() {
   return loadSupabaseRow(CONFIG.rowId);
 }
 
-async function loadNotificationState() {
-  const row = await loadSupabaseRow(CONFIG.notificationRowId);
-  return createNotificationState(row && row.data);
-}
-
 async function saveRemoteState(data) {
   return saveSupabaseRow(CONFIG.rowId, data);
-}
-
-async function saveNotificationState(data) {
-  return saveSupabaseRow(CONFIG.notificationRowId, data);
 }
 
 async function sendWxPusher(payload) {
@@ -498,7 +495,7 @@ async function main() {
     return;
   }
 
-  let notificationState = await loadNotificationState();
+  let notificationState = createNotificationState(row.data.notificationHistory);
   const mergedNotificationHistory = mergeAccountNotificationHistory(notificationState, row.data.accounts);
   notificationState = mergedNotificationHistory.state;
   let notificationChanged = mergedNotificationHistory.changed;
@@ -572,16 +569,16 @@ async function main() {
     }
   }
 
+  if (notificationChanged) {
+    syncNotificationHistoryToMainState(state, notificationState);
+    changed = true;
+  }
+
   if (changed) {
     state.lastUpdated = nowIso;
     state.modifiedAt = nowIso;
     await saveRemoteState(state);
     log("Remote state updated.");
-  }
-
-  if (notificationChanged) {
-    await saveNotificationState(notificationState);
-    log("Notification cooldown state updated.");
   }
 }
 

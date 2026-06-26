@@ -22,6 +22,7 @@
         modifiedAt: "2026-06-16T00:00:00+08:00",
         openCarriers: ["broadcasting"],
         accountDefaults: {},
+        notificationHistory: {},
         accounts: [
           {
             id: "broadcasting-19290397571",
@@ -226,9 +227,14 @@
           return Boolean(CARRIERS[carrier]);
         }) : ["broadcasting"];
         next.accountDefaults = normalizeAccountDefaults(input && input.accountDefaults, defaults);
+        next.notificationHistory = normalizeNotificationHistory(input && input.notificationHistory);
         next.lastUpdated = next.lastUpdated || DEFAULT_STATE.lastUpdated;
         next.modifiedAt = next.modifiedAt || next.lastUpdated || DEFAULT_STATE.modifiedAt;
         return next;
+      }
+
+      function normalizeNotificationHistory(input) {
+        return input && typeof input === "object" && !Array.isArray(input) ? input : {};
       }
 
       function normalizeAccountDefaults(input, defaults) {
@@ -328,9 +334,10 @@
       function serializeCloudState(snapshot) {
         var source = normalizeState(snapshot || state);
         return {
-          schemaVersion: 3,
+          schemaVersion: 4,
           modifiedAt: source.modifiedAt,
           lastUpdated: source.lastUpdated,
+          notificationHistory: normalizeNotificationHistory(source.notificationHistory),
           accountDefaults: serializeAccountDefaults(source.accountDefaults),
           accounts: source.accounts.map(function (account) {
             return serializeAccount(account);
@@ -541,6 +548,16 @@
           return localData;
         }
 
+        var remoteHistory = normalizeNotificationHistory(remoteState.notificationHistory);
+        var localHistory = normalizeNotificationHistory(localData.notificationHistory);
+        Object.keys(remoteHistory).forEach(function (id) {
+          var localRecord = localHistory[id] || {};
+          var remoteRecord = remoteHistory[id] || {};
+          var latest = latestIsoValue(localRecord.warningLastNotifiedAt, remoteRecord.warningLastNotifiedAt);
+          localHistory[id] = Object.assign({}, remoteRecord, localRecord, { warningLastNotifiedAt: latest });
+        });
+        localData.notificationHistory = localHistory;
+
         var remoteById = {};
         remoteState.accounts.forEach(function (account) {
           remoteById[account.id] = account;
@@ -590,6 +607,7 @@
             lastUpdated: remoteData.lastUpdated || row.updated_at || (baseState && baseState.lastUpdated),
             modifiedAt: remoteData.modifiedAt || remoteData.lastUpdated || row.updated_at || (baseState && baseState.modifiedAt),
             openCarriers: (baseState && baseState.openCarriers) || cloneDefault().openCarriers,
+            notificationHistory: remoteData.notificationHistory || (baseState && baseState.notificationHistory),
             accountDefaults: remoteData.accountDefaults || (baseState && baseState.accountDefaults),
             accounts: remoteData.accounts
           });
