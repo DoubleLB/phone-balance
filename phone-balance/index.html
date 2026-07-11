@@ -8,7 +8,10 @@
   <meta name="apple-mobile-web-app-title" content="余额总览">
   <meta name="apple-mobile-web-app-status-bar-style" content="default">
   <title>余额总览</title>
-  <link rel="stylesheet" href="css/style.css?v=20260624-2">
+  <script>
+    window.__ASSET_VERSION__ = String(Date.now());
+    document.write('<link rel="stylesheet" href="css/style.css?v=' + window.__ASSET_VERSION__ + '">');
+  </script>
 </head>
 <body>
   <main class="app">
@@ -173,12 +176,8 @@
               <input id="warningCooldownInput" type="number" inputmode="numeric" min="1" step="1">
             </div>
             <div class="field">
-              <label for="warningChannelInput">预留通知渠道</label>
-              <select id="warningChannelInput">
-                <option value="wxpusher">微信推送（WxPusher）</option>
-                <option value="browser">浏览器通知</option>
-                <option value="sms">短信</option>
-              </select>
+              <label>后台通知渠道</label>
+              <p class="field-note">触发提醒后会同时尝试 WxPusher 和 Server酱 Turbo；实际是否发送取决于 GitHub Secrets 是否已配置。</p>
             </div>
             <div class="form-actions">
               <div class="reset-actions">
@@ -187,7 +186,7 @@
               </div>
               <button type="button" class="primary-action" id="saveBtn">保存设置</button>
             </div>
-            <p>保存余额后会把该账号的计算基准设为昨天，保证今天不会重复扣费。通知规则也会随账号一起保存，后续接入 WxPusher / Supabase 后可直接按该规则推送。</p>
+            <p>保存余额后会把该账号的计算基准设为昨天，保证今天不会重复扣费。通知规则会同步到云端，后台任务按账号分别判断并同时尝试两种提醒通道。</p>
           </div>
         </details>
 
@@ -210,6 +209,9 @@
 
   <div class="toast" id="toast"></div>
 
-  <script src="js/app.js?v=20260624-2"></script>
+  <script>
+    document.write('<script src="js/billing-core.js?v=' + window.__ASSET_VERSION__ + '"><\/script>');
+    document.write('<script src="js/app.js?v=' + window.__ASSET_VERSION__ + '"><\/script>');
+  </script>
 </body>
 </html>

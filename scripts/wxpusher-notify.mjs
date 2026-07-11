@@ -1,3 +1,18 @@
+import { createRequire } from "node:module";
+
+const require = createRequire(import.meta.url);
+const billing = require("../phone-balance/js/billing-core.js");
+const {
+  addDays,
+  compareKeys,
+  localDateKeyFromDate,
+  partsFromKey,
+  roundMoney,
+  safeNumber,
+  settleAccount,
+  warningStatus
+} = billing;
+
 const CONFIG = {
   supabaseUrl: process.env.SUPABASE_URL || "https://rhkzsyhxezlppfxqzalm.supabase.co",
   supabaseKey: process.env.SUPABASE_ANON_KEY || "sb_publishable_jg7Ht5A1SXFfkn4VZImQKA_eAHoh5uZ",
@@ -23,166 +38,6 @@ function fail(message) {
 
 function warn(message) {
   console.warn(`[notify] ${message}`);
-}
-
-function pad(value) {
-  return String(value).padStart(2, "0");
-}
-
-function dateKeyFromDate(date) {
-  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
-}
-
-function partsFromKey(key) {
-  const [year, month, day] = String(key).split("-").map(Number);
-  return { year, month, day };
-}
-
-function addDays(key, amount) {
-  const parts = partsFromKey(key);
-  const date = new Date(Date.UTC(parts.year, parts.month - 1, parts.day + amount));
-  return dateKeyFromDate(date);
-}
-
-function compareKeys(a, b) {
-  const ap = partsFromKey(a);
-  const bp = partsFromKey(b);
-  const at = Date.UTC(ap.year, ap.month - 1, ap.day);
-  const bt = Date.UTC(bp.year, bp.month - 1, bp.day);
-  return at === bt ? 0 : at < bt ? -1 : 1;
-}
-
-function daysInMonthFor(year, month) {
-  return new Date(year, month, 0).getDate();
-}
-
-function isLastDayOfMonth(key) {
-  const parts = partsFromKey(key);
-  return parts.day === daysInMonthFor(parts.year, parts.month);
-}
-
-function safeNumber(value, fallback = 0) {
-  const number = Number(value);
-  return Number.isFinite(number) ? number : fallback;
-}
-
-function roundMoney(value) {
-  return Math.round((Number(value) + Number.EPSILON) * 1000000) / 1000000;
-}
-
-function dailyFeeFor(account, key) {
-  if (account.billingType === "daily") return safeNumber(account.dailyCharge, 0);
-  if (account.billingType === "monthEnd") return 0;
-  const parts = partsFromKey(key);
-  return safeNumber(account.monthlyCharge, 0) / daysInMonthFor(parts.year, parts.month);
-}
-
-function chargeForDate(account, key) {
-  if (account.billingType === "daily") return safeNumber(account.dailyCharge, 0);
-  if (account.billingType === "monthEnd") {
-    return isLastDayOfMonth(key) ? safeNumber(account.monthlyCharge, 0) : 0;
-  }
-  return dailyFeeFor(account, key);
-}
-
-function settleAccount(account, today) {
-  const yesterday = addDays(today, -1);
-  let cursor = addDays(account.lastSettledDate || today, 1);
-  let changed = false;
-
-  while (compareKeys(cursor, yesterday) <= 0) {
-    account.balance = roundMoney(safeNumber(account.balance, 0) - chargeForDate(account, cursor));
-    account.lastSettledDate = cursor;
-    cursor = addDays(cursor, 1);
-    changed = true;
-  }
-
-  return changed;
-}
-
-function estimateUsage(balance, account, startKey) {
-  if (balance <= 0) return { days: 0, until: startKey };
-  let remaining = balance;
-  let cursor = startKey;
-  let days = 0;
-
-  while (days < 3650) {
-    const fee = chargeForDate(account, cursor);
-    if (remaining + 1e-7 < fee) break;
-    remaining -= fee;
-    days += 1;
-    cursor = addDays(cursor, 1);
-  }
-
-  return {
-    days,
-    until: days > 0 ? addDays(startKey, days - 1) : startKey
-  };
-}
-
-function endOfMonthKey(key) {
-  const parts = partsFromKey(key);
-  return dateKeyFromDate(new Date(Date.UTC(parts.year, parts.month, 0)));
-}
-
-function monthEndProjection(account, today) {
-  const monthlyCharge = safeNumber(account.monthlyCharge, 0);
-  const balance = roundMoney(safeNumber(account.balance, 0));
-  const fullMonthsSupported = monthlyCharge > 0 ? Math.max(0, Math.floor(balance / monthlyCharge)) : 0;
-  const nextChargeDate = endOfMonthKey(today);
-  const postChargeBalance = roundMoney(balance - monthlyCharge);
-
-  return {
-    fullMonthsSupported,
-    nextChargeDate,
-    postChargeBalance
-  };
-}
-
-function warningStatus(account, today) {
-  const settledBalance = roundMoney(safeNumber(account.balance, 0));
-  const estimate = estimateUsage(settledBalance, account, today);
-  const enabled = account.warningEnabled !== false;
-  const mode = account.warningMode === "days" || account.warningMode === "afterCharge" ? account.warningMode : "balance";
-  const threshold = safeNumber(account.warningThreshold, mode === "days" ? 30 : 10);
-  const monthEndInfo = account.billingType === "monthEnd" ? monthEndProjection(account, today) : null;
-  const postChargeBalance = monthEndInfo ? monthEndInfo.postChargeBalance : roundMoney(settledBalance - safeNumber(account.dailyCharge, 0));
-  const triggered = enabled
-    ? (mode === "days"
-      ? estimate.days <= threshold
-      : mode === "afterCharge"
-        ? postChargeBalance <= threshold
-        : settledBalance <= threshold)
-    : false;
-
-  let reason = "";
-  if (!enabled) {
-    reason = "提醒已关闭";
-  } else if (mode === "days") {
-    reason = `预计可用 ${estimate.days} 天，低于 ${threshold} 天阈值`;
-  } else if (mode === "afterCharge") {
-    reason = postChargeBalance < 0
-      ? `下次扣费后预计欠费 ¥${Math.abs(postChargeBalance).toFixed(2)}`
-      : `下次扣费后预计余额 ¥${postChargeBalance.toFixed(2)}`;
-  } else {
-    reason = settledBalance < 0
-      ? `当前欠费 ${Math.abs(settledBalance).toFixed(2)} 元`
-      : `当前余额 ${settledBalance.toFixed(2)} 元，低于 ${threshold.toFixed(2)} 元阈值`;
-  }
-
-  return {
-    enabled,
-    mode,
-    threshold,
-    triggered,
-    daysLeft: estimate.days,
-    until: estimate.until,
-    postChargeBalance,
-    fullMonthsSupported: monthEndInfo ? monthEndInfo.fullMonthsSupported : 0,
-    nextChargeDate: monthEndInfo ? monthEndInfo.nextChargeDate : "",
-    reason,
-    cooldownHours: Math.max(1, safeNumber(account.warningCooldownHours, 24))
-  };
 }
 
 function accountNotificationKey(account) {
@@ -274,8 +129,8 @@ function formatChinaDate(key) {
   return `${parts.year}年${parts.month}月${parts.day}日`;
 }
 
-function shouldSendBackgroundNotification(account) {
-  return account.warningChannel !== "browser";
+function shouldSendBackgroundNotification() {
+  return true;
 }
 
 function buildTextPayload(account, status) {
@@ -499,7 +354,7 @@ async function main() {
   const mergedNotificationHistory = mergeAccountNotificationHistory(notificationState, row.data.accounts);
   notificationState = mergedNotificationHistory.state;
   let notificationChanged = mergedNotificationHistory.changed;
-  const today = dateKeyFromDate(new Date());
+  const today = localDateKeyFromDate(new Date());
   const nowIso = new Date().toISOString();
   const state = row.data;
   let changed = false;

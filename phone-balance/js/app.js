@@ -1,6 +1,9 @@
 (function () {
       "use strict";
 
+      var billing = window.PhoneBalanceBilling;
+      if (!billing) throw new Error("Billing core is not loaded.");
+
       var STORAGE_KEY = "phone_balance_overview_v3";
       var CLOUD_SYNC = {
         enabled: true,
@@ -267,7 +270,7 @@
             warningMode: "balance",
             warningThreshold: 8,
             warningCooldownHours: 24,
-            warningChannel: "wxpusher",
+            warningChannel: "all",
             warningLastNotifiedAt: ""
           };
         }
@@ -278,7 +281,7 @@
             warningMode: "afterCharge",
             warningThreshold: 10,
             warningCooldownHours: 24,
-            warningChannel: "wxpusher",
+            warningChannel: "all",
             warningLastNotifiedAt: ""
           };
         }
@@ -288,7 +291,7 @@
           warningMode: "days",
           warningThreshold: 30,
           warningCooldownHours: 24,
-          warningChannel: "wxpusher",
+          warningChannel: "all",
           warningLastNotifiedAt: ""
         };
       }
@@ -299,9 +302,8 @@
         return "balance";
       }
 
-      function normalizeWarningChannel(value, fallback) {
-        if (value === "sms" || value === "browser" || value === "wxpusher") return value;
-        return fallback || "wxpusher";
+      function normalizeWarningChannel() {
+        return "all";
       }
 
       function applyDefaultWarningSettings(account, fallback) {
@@ -368,51 +370,41 @@
           warningEnabled: account.warningEnabled !== false,
           warningMode: account.warningMode || "balance",
           warningCooldownHours: roundMoney(account.warningCooldownHours || 24),
-          warningChannel: account.warningChannel || "wxpusher",
+          warningChannel: account.warningChannel || "all",
           warningLastNotifiedAt: account.warningLastNotifiedAt || ""
         };
       }
 
       function safeNumber(value, fallback) {
-        var number = Number(value);
-        return Number.isFinite(number) ? number : fallback;
+        return billing.safeNumber(value, fallback);
       }
 
       function pad(value) {
-        return String(value).padStart(2, "0");
+        return billing.pad(value);
       }
 
       function todayKey() {
-        var date = new Date();
-        return dateKey(date.getFullYear(), date.getMonth() + 1, date.getDate());
+        return billing.localDateKeyFromDate(new Date());
       }
 
       function dateKey(year, month, day) {
-        return year + "-" + pad(month) + "-" + pad(day);
+        return billing.dateKey(year, month, day);
       }
 
       function dateKeyFromDate(date) {
-        return dateKey(date.getUTCFullYear(), date.getUTCMonth() + 1, date.getUTCDate());
+        return billing.dateKeyFromDate(date);
       }
 
       function partsFromKey(key) {
-        var parts = String(key).split("-").map(Number);
-        return { year: parts[0], month: parts[1], day: parts[2] };
+        return billing.partsFromKey(key);
       }
 
       function addDays(key, amount) {
-        var parts = partsFromKey(key);
-        var date = new Date(Date.UTC(parts.year, parts.month - 1, parts.day + amount));
-        return dateKey(date.getUTCFullYear(), date.getUTCMonth() + 1, date.getUTCDate());
+        return billing.addDays(key, amount);
       }
 
       function compareKeys(a, b) {
-        var aParts = partsFromKey(a);
-        var bParts = partsFromKey(b);
-        var aTime = Date.UTC(aParts.year, aParts.month - 1, aParts.day);
-        var bTime = Date.UTC(bParts.year, bParts.month - 1, bParts.day);
-        if (aTime === bTime) return 0;
-        return aTime < bTime ? -1 : 1;
+        return billing.compareKeys(a, b);
       }
 
       function isDateKey(value) {
@@ -420,14 +412,11 @@
       }
 
       function daysInMonthFor(year, month) {
-        return new Date(year, month, 0).getDate();
+        return billing.daysInMonthFor(year, month);
       }
 
       function dailyFeeFor(account, key) {
-        if (account.billingType === "daily") return account.dailyCharge;
-        if (account.billingType === "monthEnd") return 0;
-        var parts = partsFromKey(key);
-        return account.monthlyCharge / daysInMonthFor(parts.year, parts.month);
+        return billing.dailyFeeFor(account, key);
       }
 
       function isLastDayOfMonth(key) {
@@ -436,21 +425,15 @@
       }
 
       function chargeForDate(account, key) {
-        if (account.billingType === "daily") return account.dailyCharge;
-        if (account.billingType === "monthEnd") return isLastDayOfMonth(key) ? account.monthlyCharge : 0;
-        return dailyFeeFor(account, key);
+        return billing.chargeForDate(account, key);
       }
 
       function monthSettledFeeFor(account, todayKeyValue) {
-        var parts = partsFromKey(todayKeyValue);
-        if (account.billingType === "monthEnd") {
-          return parts.day > daysInMonthFor(parts.year, parts.month) ? account.monthlyCharge : 0;
-        }
-        return dailyFeeFor(account, todayKeyValue) * Math.max(0, parts.day - 1);
+        return billing.monthSettledFeeFor(account, todayKeyValue);
       }
 
       function roundMoney(value) {
-        return Math.round((Number(value) + Number.EPSILON) * 1000000) / 1000000;
+        return billing.roundMoney(value);
       }
 
       function money(value, digits) {
@@ -474,21 +457,15 @@
       }
 
       function endOfMonthKey(key) {
-        var parts = partsFromKey(key);
-        return dateKeyFromDate(new Date(Date.UTC(parts.year, parts.month, 0)));
+        return billing.endOfMonthKey(key);
       }
 
       function endOfMonthOffsetKey(key, offset) {
-        var parts = partsFromKey(key);
-        return dateKeyFromDate(new Date(Date.UTC(parts.year, parts.month + offset, 0)));
+        return billing.endOfMonthOffsetKey(key, offset);
       }
 
       function daysUntilKey(fromKey, toKey) {
-        var fromParts = partsFromKey(fromKey);
-        var toParts = partsFromKey(toKey);
-        var fromTime = Date.UTC(fromParts.year, fromParts.month - 1, fromParts.day);
-        var toTime = Date.UTC(toParts.year, toParts.month - 1, toParts.day);
-        return Math.max(0, Math.round((toTime - fromTime) / 86400000));
+        return billing.daysUntilKey(fromKey, toKey);
       }
 
       function billingStandardText(account, dailyFee) {
@@ -504,19 +481,7 @@
       }
 
       function monthEndProjection(account, today) {
-        var monthlyCharge = safeNumber(account.monthlyCharge, 0);
-        var balance = roundMoney(account.balance);
-        var fullMonthsSupported = monthlyCharge > 0 ? Math.max(0, Math.floor(balance / monthlyCharge)) : 0;
-        var nextChargeDate = endOfMonthKey(today);
-        var attentionDate = endOfMonthOffsetKey(today, fullMonthsSupported);
-        var postChargeBalance = roundMoney(balance - monthlyCharge);
-
-        return {
-          fullMonthsSupported: fullMonthsSupported,
-          nextChargeDate: nextChargeDate,
-          attentionDate: attentionDate,
-          postChargeBalance: postChargeBalance
-        };
+        return billing.monthEndProjection(account, today);
       }
 
       function chargeRuleText(account, data) {
@@ -909,19 +874,7 @@
       }
 
       function settleAccount(account) {
-        var today = todayKey();
-        var yesterday = addDays(today, -1);
-        var cursor = addDays(account.lastSettledDate, 1);
-        var changed = false;
-
-        while (compareKeys(cursor, yesterday) <= 0) {
-          account.balance = roundMoney(account.balance - chargeForDate(account, cursor));
-          account.lastSettledDate = cursor;
-          cursor = addDays(cursor, 1);
-          changed = true;
-        }
-
-        return changed;
+        return billing.settleAccount(account, todayKey());
       }
 
       function settleAll() {
@@ -939,23 +892,7 @@
       }
 
       function estimateUsage(balance, account, startKey) {
-        if (balance <= 0) return { days: 0, until: startKey };
-        var remaining = balance;
-        var cursor = startKey;
-        var days = 0;
-
-        while (days < 3650) {
-          var fee = chargeForDate(account, cursor);
-          if (remaining + 0.0000001 < fee) break;
-          remaining -= fee;
-          days += 1;
-          cursor = addDays(cursor, 1);
-        }
-
-        return {
-          days: days,
-          until: days > 0 ? addDays(startKey, days - 1) : startKey
-        };
+        return billing.estimateUsage(balance, account, startKey);
       }
 
       function warningThresholdLabel(mode) {
@@ -979,56 +916,10 @@
         return "余额低于 ¥" + money(account.warningThreshold, 2) + " 时触发提醒，默认 " + trimNumber(account.warningCooldownHours || 24) + " 小时内不重复提醒。";
       }
 
-      function warningStatus(account, data) {
-        var mode = normalizeWarningMode(account.warningMode);
-        var threshold = safeNumber(account.warningThreshold, 0);
-        var comparableDays = typeof data.attentionDays === "number" ? data.attentionDays : data.daysLeft;
-        var triggered = false;
-        var reason = "";
-
-        if (account.warningEnabled === false) {
-          return {
-            enabled: false,
-            mode: mode,
-            threshold: threshold,
-            triggered: false,
-            reason: "当前账号未启用提醒。",
-            summary: warningRuleText(account)
-          };
-        }
-
-        if (mode === "afterCharge") {
-          var postChargeBalance = typeof data.postChargeBalance === "number" ? data.postChargeBalance : data.balance;
-          triggered = postChargeBalance <= threshold;
-          reason = triggered
-            ? (postChargeBalance < 0
-              ? "下次扣费后预计欠费 ¥" + money(Math.abs(postChargeBalance), 2)
-              : "下次扣费后余额将低于提醒线 ¥" + money(threshold, 2))
-            : "下次扣费后预计余额 ¥" + money(postChargeBalance, 2);
-        } else if (mode === "days") {
-          triggered = comparableDays <= threshold;
-          reason = triggered
-            ? (comparableDays > 0
-              ? "预计仅剩约 " + comparableDays + " 天，已低于 " + trimNumber(threshold) + " 天提醒线"
-              : "预计可用时间已不足 1 天")
-            : "预计可用约 " + comparableDays + " 天";
-        } else {
-          triggered = data.balance <= threshold;
-          reason = triggered
-            ? (data.balance < 0
-              ? "当前已欠费 ¥" + money(Math.abs(data.balance), 2)
-              : "余额已低于提醒线 ¥" + money(threshold, 2))
-            : "当前余额 ¥" + money(data.balance, 2);
-        }
-
-        return {
-          enabled: true,
-          mode: mode,
-          threshold: threshold,
-          triggered: triggered,
-          reason: reason,
-          summary: warningRuleText(account)
-        };
+      function warningStatus(account) {
+        var status = billing.warningStatus(account, todayKey());
+        status.summary = warningRuleText(account);
+        return status;
       }
 
       function updateWarningInputLabel() {
@@ -1051,12 +942,7 @@
             ? "可撑 " + monthEndInfo.fullMonthsSupported + " 个整月"
             : "本月末需关注")
           : (estimate.days > 0 ? "约 " + estimate.days + " 天" : "不足 1 天");
-        var status = warningStatus(account, {
-          balance: roundMoney(account.balance),
-          daysLeft: attentionDays,
-          attentionDays: attentionDays,
-          postChargeBalance: monthEndInfo ? monthEndInfo.postChargeBalance : roundMoney(account.balance - dailyFee)
-        });
+        var status = warningStatus(account);
 
         return {
           id: account.id,
@@ -1325,7 +1211,9 @@
         els.warningEnabledInput.checked = account.warningEnabled !== false;
         els.warningModeInput.value = normalizeWarningMode(account.warningMode, account.billingType === "monthEnd" ? "afterCharge" : "balance");
         els.warningCooldownInput.value = trimNumber(account.warningCooldownHours || 24);
-        els.warningChannelInput.value = account.warningChannel || "wxpusher";
+        if (els.warningChannelInput) {
+          els.warningChannelInput.value = account.warningChannel || "all";
+        }
         updateWarningInputLabel();
         if (els.notifySummary) {
           els.notifySummary.textContent = data.warningRuleText;
@@ -1410,7 +1298,7 @@
           warningEnabled: Boolean(els.warningEnabledInput && els.warningEnabledInput.checked),
           warningMode: normalizeWarningMode(els.warningModeInput && els.warningModeInput.value, "balance"),
           warningCooldownHours: Math.max(1, Math.round(cooldown)),
-          warningChannel: els.warningChannelInput ? els.warningChannelInput.value : "wxpusher"
+          warningChannel: "all"
         };
       }
 
