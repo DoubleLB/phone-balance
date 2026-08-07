@@ -233,6 +233,9 @@
         next.notificationHistory = normalizeNotificationHistory(input && input.notificationHistory);
         next.lastUpdated = next.lastUpdated || DEFAULT_STATE.lastUpdated;
         next.modifiedAt = next.modifiedAt || next.lastUpdated || DEFAULT_STATE.modifiedAt;
+        next.accounts.forEach(function (account) {
+          if (!account.modifiedAt) account.modifiedAt = next.modifiedAt;
+        });
         return next;
       }
 
@@ -259,6 +262,9 @@
         account.warningThreshold = safeNumber(account.warningThreshold, fallback.warningThreshold || 0);
         account.billingType = normalizeBillingType(account.billingType, fallback.billingType, account.carrier);
         account.lastSettledDate = isDateKey(account.lastSettledDate) ? account.lastSettledDate : fallback.lastSettledDate;
+        account.modifiedAt = typeof account.modifiedAt === "string"
+          ? account.modifiedAt
+          : (typeof fallback.modifiedAt === "string" ? fallback.modifiedAt : "");
         applyDefaultWarningSettings(account, fallback);
         return account;
       }
@@ -371,7 +377,8 @@
           warningMode: account.warningMode || "balance",
           warningCooldownHours: roundMoney(account.warningCooldownHours || 24),
           warningChannel: account.warningChannel || "all",
-          warningLastNotifiedAt: account.warningLastNotifiedAt || ""
+          warningLastNotifiedAt: account.warningLastNotifiedAt || "",
+          modifiedAt: account.modifiedAt || ""
         };
       }
 
@@ -508,6 +515,10 @@
         return left || "";
       }
 
+      function accountModifiedTime(account) {
+        return timeValue(account && (account.modifiedAt || account.lastUpdated || account.lastSettledDate));
+      }
+
       function mergeRemoteNotificationFields(localData, remoteState) {
         if (!localData || !Array.isArray(localData.accounts) || !remoteState || !Array.isArray(remoteState.accounts)) {
           return localData;
@@ -531,6 +542,13 @@
         localData.accounts.forEach(function (account) {
           var remoteAccount = remoteById[account.id];
           if (!remoteAccount) return;
+          if (accountModifiedTime(remoteAccount) > accountModifiedTime(account)) {
+            Object.keys(account).forEach(function (key) {
+              delete account[key];
+            });
+            Object.assign(account, serializeAccount(remoteAccount));
+            return;
+          }
           account.warningLastNotifiedAt = latestIsoValue(
             account.warningLastNotifiedAt,
             remoteAccount.warningLastNotifiedAt
@@ -538,6 +556,20 @@
         });
 
         return localData;
+      }
+
+      function mergeRemoteIntoLocalState(localState, remoteState) {
+        if (!remoteState) return localState;
+        var localData = serializeCloudState(localState);
+        localData = mergeRemoteNotificationFields(localData, remoteState);
+        return normalizeState({
+          lastUpdated: latestIsoValue(localState.lastUpdated, remoteState.lastUpdated),
+          modifiedAt: latestIsoValue(localState.modifiedAt, remoteState.modifiedAt),
+          openCarriers: localState.openCarriers,
+          notificationHistory: localData.notificationHistory,
+          accountDefaults: localData.accountDefaults || localState.accountDefaults,
+          accounts: localData.accounts
+        });
       }
 
       function stateModifiedTime(snapshot) {
@@ -682,13 +714,13 @@
             cloudReady = true;
 
             if (remoteState && isRemoteNewer(remoteState, localState)) {
-              state = remoteState;
+              state = mergeRemoteIntoLocalState(localState, remoteState);
               settleAll();
               saveState();
               render();
-              renderSyncStatus("ready", "检测到云端新数据，已先同步。", row.updated_at || remoteState.modifiedAt);
-              showToast("云端有更新，请重新保存");
-              return true;
+              renderSyncStatus("ready", "检测到云端新数据，已自动合并。", row.updated_at || remoteState.modifiedAt);
+              showToast("已合并云端更新");
+              return false;
             }
 
             renderSyncStatus("ready", "云端数据已确认。", row && (row.updated_at || (row.data && row.data.modifiedAt)));
@@ -879,11 +911,16 @@
 
       function settleAll() {
         var changed = false;
+        var now = "";
         state.accounts.forEach(function (account) {
-          if (settleAccount(account)) changed = true;
+          if (settleAccount(account)) {
+            now = now || new Date().toISOString();
+            account.modifiedAt = now;
+            changed = true;
+          }
         });
         if (changed) {
-          var now = new Date().toISOString();
+          now = now || new Date().toISOString();
           state.lastUpdated = now;
           state.modifiedAt = now;
           saveState();
@@ -1328,6 +1365,7 @@
 
           applySettingsToAccount(account, values);
           var now = new Date().toISOString();
+          account.modifiedAt = now;
           state.lastUpdated = now;
           state.modifiedAt = now;
           saveState();
@@ -1351,6 +1389,7 @@
           state.accountDefaults = state.accountDefaults || {};
           state.accountDefaults[account.id] = nextDefault;
           var now = new Date().toISOString();
+          nextDefault.modifiedAt = now;
           state.lastUpdated = now;
           state.modifiedAt = now;
           saveState();
@@ -1370,6 +1409,7 @@
           account.balance = roundMoney(account.balance + amount);
           account.lastSettledDate = addDays(todayKey(), -1);
           var now = new Date().toISOString();
+          account.modifiedAt = now;
           state.lastUpdated = now;
           state.modifiedAt = now;
           saveState();
@@ -1394,6 +1434,7 @@
           account.lastSettledDate = addDays(todayKey(), -1);
           applyDefaultWarningSettings(account, builtInDefaultAccountById(activeAccountId) || fallback);
           var now = new Date().toISOString();
+          account.modifiedAt = now;
           state.lastUpdated = now;
           state.modifiedAt = now;
           saveState();
