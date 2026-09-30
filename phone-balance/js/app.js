@@ -3,8 +3,11 @@
 
       var billing = window.PhoneBalanceBilling;
       if (!billing) throw new Error("Billing core is not loaded.");
+      var syncCore = window.PhoneBalanceSync;
+      if (!syncCore) throw new Error("Sync core is not loaded.");
 
       var STORAGE_KEY = "phone_balance_overview_v3";
+      var CLOUD_MARKER_KEY = STORAGE_KEY + "_cloud_synced_v1";
       var CLOUD_SYNC = {
         enabled: true,
         supabaseUrl: "https://rhkzsyhxezlppfxqzalm.supabase.co",
@@ -118,6 +121,8 @@
         ]
       };
 
+      var hasStoredState = false;
+      var hasCloudSyncMarker = false;
       var state = loadState();
       var activeAccountId = "";
       var lastRenderedDate = "";
@@ -125,6 +130,7 @@
       var homeScrollY = 0;
       var toastTimer = null;
       var cloudReady = false;
+      var cloudHydrated = false;
       var cloudBusy = false;
       var pushTimer = null;
       var syncState = {
@@ -191,12 +197,16 @@
 
       function loadState() {
         try {
+          hasCloudSyncMarker = localStorage.getItem(CLOUD_MARKER_KEY) === "1";
           var raw = localStorage.getItem(STORAGE_KEY);
           if (!raw) {
+            hasStoredState = false;
             return cloneDefault();
           }
+          hasStoredState = true;
           return normalizeState(JSON.parse(raw));
         } catch (error) {
+          hasStoredState = false;
           return cloneDefault();
         }
       }
@@ -337,6 +347,11 @@
 
       function saveState() {
         localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+      }
+
+      function markCloudSynced() {
+        hasCloudSyncMarker = true;
+        localStorage.setItem(CLOUD_MARKER_KEY, "1");
       }
 
       function serializeCloudState(snapshot) {
@@ -516,7 +531,7 @@
       }
 
       function accountModifiedTime(account) {
-        return timeValue(account && (account.modifiedAt || account.lastUpdated || account.lastSettledDate));
+        return syncCore.recordModifiedTime(account);
       }
 
       function mergeRemoteNotificationFields(localData, remoteState) {
@@ -534,6 +549,9 @@
         });
         localData.notificationHistory = localHistory;
 
+        localData.accounts = syncCore.mergeRecordLists(localData.accounts, remoteState.accounts);
+        localData.accountDefaults = syncCore.mergeRecordMaps(localData.accountDefaults, remoteState.accountDefaults);
+
         var remoteById = {};
         remoteState.accounts.forEach(function (account) {
           remoteById[account.id] = account;
@@ -541,14 +559,7 @@
 
         localData.accounts.forEach(function (account) {
           var remoteAccount = remoteById[account.id];
-          if (!remoteAccount) return;
-          if (accountModifiedTime(remoteAccount) > accountModifiedTime(account)) {
-            Object.keys(account).forEach(function (key) {
-              delete account[key];
-            });
-            Object.assign(account, serializeAccount(remoteAccount));
-            return;
-          }
+          if (!remoteAccount || accountModifiedTime(remoteAccount) > accountModifiedTime(account)) return;
           account.warningLastNotifiedAt = latestIsoValue(
             account.warningLastNotifiedAt,
             remoteAccount.warningLastNotifiedAt
@@ -560,16 +571,21 @@
 
       function mergeRemoteIntoLocalState(localState, remoteState) {
         if (!remoteState) return localState;
-        var localData = serializeCloudState(localState);
+        var mergedState = syncCore.mergeStatesByAccount(localState, remoteState);
+        var localData = serializeCloudState(mergedState);
         localData = mergeRemoteNotificationFields(localData, remoteState);
         return normalizeState({
-          lastUpdated: latestIsoValue(localState.lastUpdated, remoteState.lastUpdated),
-          modifiedAt: latestIsoValue(localState.modifiedAt, remoteState.modifiedAt),
+          lastUpdated: mergedState.lastUpdated,
+          modifiedAt: mergedState.modifiedAt,
           openCarriers: localState.openCarriers,
           notificationHistory: localData.notificationHistory,
-          accountDefaults: localData.accountDefaults || localState.accountDefaults,
+          accountDefaults: localData.accountDefaults,
           accounts: localData.accounts
         });
+      }
+
+      function cloudDataEqual(left, right) {
+        return JSON.stringify(serializeCloudState(left)) === JSON.stringify(serializeCloudState(right));
       }
 
       function stateModifiedTime(snapshot) {
@@ -690,6 +706,10 @@
 
       function checkCloudWriteConflict() {
         if (!isCloudConfigured()) return Promise.resolve(false);
+        if (!cloudHydrated) {
+          showToast("正在读取云端数据，请稍后再保存");
+          return Promise.resolve(true);
+        }
         if (cloudBusy) {
           showToast("云端同步中，请稍后再保存");
           return Promise.resolve(true);
@@ -712,6 +732,7 @@
             var row = rows && rows[0];
             var remoteState = decodeRemoteState(row, localState);
             cloudReady = true;
+            if (remoteState) markCloudSynced();
 
             if (remoteState && isRemoteNewer(remoteState, localState)) {
               state = mergeRemoteIntoLocalState(localState, remoteState);
@@ -728,7 +749,8 @@
           })
           .catch(function (error) {
             renderSyncStatus("error", error.message || "云端检查失败，保留本地操作。");
-            return false;
+            showToast("云端检查失败，本次未保存，请重试");
+            return true;
           })
           .finally(function () {
             cloudBusy = false;
@@ -742,7 +764,7 @@
       }
 
       function scheduleCloudPush(delay) {
-        if (!cloudReady || !isCloudConfigured()) return;
+        if (!cloudReady || !cloudHydrated || !isCloudConfigured()) return;
         window.clearTimeout(pushTimer);
         pushTimer = window.setTimeout(function () {
           if (cloudBusy) {
@@ -755,8 +777,8 @@
 
       function flushCloudPush(showMessage) {
         if (!isCloudConfigured()) return Promise.resolve(false);
-        if (!cloudReady) {
-          scheduleCloudPush(700);
+        if (!cloudReady || !cloudHydrated) {
+          showToast("正在读取云端数据，请稍后再保存");
           return Promise.resolve(false);
         }
         window.clearTimeout(pushTimer);
@@ -790,26 +812,24 @@
 
             cloudReady = true;
 
-            if (remoteState && isRemoteNewer(remoteState, localState)) {
-              state = remoteState;
-              settleAll();
-              saveState();
-              render();
-              if (needsMigration) {
-                scheduleCloudPush(0);
-              }
-              renderSyncStatus("ready", "已使用云端最新数据。", row.updated_at || remoteState.modifiedAt);
-              if (showMessage) showToast("已同步云端数据");
-              return true;
-            }
+            var resolved = syncCore.resolveInitialState(localState, remoteState, hasStoredState && hasCloudSyncMarker);
+            state = remoteState ? mergeRemoteIntoLocalState(resolved.state, remoteState) : resolved.state;
+            cloudHydrated = true;
+            hasStoredState = true;
+            if (remoteState) markCloudSynced();
+            settleAll();
+            saveState();
+            render();
 
-            if (!row || !remoteState || needsMigration || isRemoteNewer(localState, remoteState)) {
-              scheduleCloudPush(0);
-            }
+            var needsPush = !row || !remoteState || needsMigration || !cloudDataEqual(state, remoteState);
+            if (needsPush) scheduleCloudPush(0);
 
-            renderSyncStatus("ready", row ? "当前设备数据已接入云端。": "正在创建首份云端数据。", row && (row.updated_at || (row.data && row.data.modifiedAt)));
+            var message = !row
+              ? "正在创建首份云端数据。"
+              : (resolved.source === "remote" ? "已使用云端数据。" : "云端数据已合并。");
+            renderSyncStatus("ready", message, row && (row.updated_at || (row.data && row.data.modifiedAt)));
             if (showMessage) showToast(row ? "同步检查已完成" : "正在创建云端数据");
-            return false;
+            return resolved.source === "remote";
           })
           .catch(function (error) {
             renderSyncStatus("error", error.message || "云端暂时不可用，已保留本地数据。");
@@ -822,42 +842,85 @@
       }
 
       function pushCloudState(showMessage) {
-        if (!isCloudConfigured() || cloudBusy) return Promise.resolve(false);
+        if (!isCloudConfigured() || !cloudHydrated || cloudBusy) return Promise.resolve(false);
 
         cloudBusy = true;
         renderSyncStatus("busy", "正在保存到云端。");
 
+        var maxAttempts = 3;
         var localSnapshot = cloneStateSnapshot(state);
-        var localData = serializeCloudState(localSnapshot);
-        var readUrl = cloudEndpoint()
-          + "?id=eq." + encodeURIComponent(CLOUD_SYNC.rowId)
-          + "&select=id,data,updated_at";
 
-        return fetch(readUrl, { headers: cloudHeaders() })
-          .then(function (response) {
-            if (!response.ok) throw new Error("读取失败 " + response.status);
-            return response.json();
-          })
-          .then(function (rows) {
-            var row = rows && rows[0];
-            var remoteState = decodeRemoteState(row, normalizeState(localSnapshot));
-            localData = mergeRemoteNotificationFields(localData, remoteState);
+        function attempt(attemptNumber, workingState) {
+          var readUrl = cloudEndpoint()
+            + "?id=eq." + encodeURIComponent(CLOUD_SYNC.rowId)
+            + "&select=id,data,updated_at";
 
-            return fetch(cloudEndpoint() + "?on_conflict=id", {
-              method: "POST",
-              headers: cloudHeaders({ Prefer: "resolution=merge-duplicates,return=minimal" }),
-              body: JSON.stringify({
+          return fetch(readUrl, { headers: cloudHeaders() })
+            .then(function (response) {
+              if (!response.ok) throw new Error("读取失败 " + response.status);
+              return response.json();
+            })
+            .then(function (rows) {
+              var row = rows && rows[0];
+              var remoteState = decodeRemoteState(row, normalizeState(workingState));
+              var mergedState = remoteState
+                ? mergeRemoteIntoLocalState(workingState, remoteState)
+                : normalizeState(workingState);
+              var localData = serializeCloudState(mergedState);
+
+              if (row && remoteState && cloudDataEqual(mergedState, remoteState)) {
+                state = mergedState;
+                markCloudSynced();
+                saveState();
+                return { skipped: true, syncedAt: row.updated_at || remoteState.modifiedAt };
+              }
+
+              var payload = {
                 id: CLOUD_SYNC.rowId,
                 data: localData,
                 updated_at: new Date().toISOString()
-              })
+              };
+              var writeUrl;
+              var headers;
+              var method;
+
+              if (row && row.updated_at) {
+                writeUrl = cloudEndpoint()
+                  + "?id=eq." + encodeURIComponent(CLOUD_SYNC.rowId)
+                  + "&updated_at=eq." + encodeURIComponent(row.updated_at);
+                method = "PATCH";
+                headers = cloudHeaders({ Prefer: "return=representation" });
+              } else {
+                writeUrl = cloudEndpoint() + "?on_conflict=id";
+                method = "POST";
+                headers = cloudHeaders({ Prefer: "resolution=ignore-duplicates,return=representation" });
+              }
+
+              return fetch(writeUrl, {
+                method: method,
+                headers: headers,
+                body: JSON.stringify(payload)
+              }).then(function (response) {
+                if (!response.ok) throw new Error("保存失败 " + response.status);
+                return response.json().catch(function () { return []; });
+              }).then(function (writtenRows) {
+                if (!Array.isArray(writtenRows) || !writtenRows.length) {
+                  if (attemptNumber >= maxAttempts) throw new Error("云端数据发生并发冲突，请稍后重试");
+                  return attempt(attemptNumber + 1, mergedState);
+                }
+                state = mergedState;
+                hasStoredState = true;
+                markCloudSynced();
+                saveState();
+                return { skipped: false, syncedAt: payload.updated_at };
+              });
             });
-          })
-          .then(function (response) {
-            if (!response.ok) throw new Error("保存失败 " + response.status);
-            var syncedAt = new Date().toISOString();
-            renderSyncStatus("ready", "云端数据已保存。", syncedAt);
-            if (showMessage) showToast("已同步到云端");
+        }
+
+        return attempt(0, localSnapshot)
+          .then(function (result) {
+            renderSyncStatus("ready", result.skipped ? "云端数据已是最新。" : "云端数据已保存。", result.syncedAt);
+            if (showMessage) showToast(result.skipped ? "云端数据已是最新" : "已同步到云端");
             return true;
           })
           .catch(function (error) {
@@ -910,6 +973,7 @@
       }
 
       function settleAll() {
+        if (isCloudConfigured() && !cloudHydrated) return;
         var changed = false;
         var now = "";
         state.accounts.forEach(function (account) {
@@ -1445,6 +1509,11 @@
       }
 
       function refreshNow(showMessage) {
+        if (isCloudConfigured() && !cloudHydrated) {
+          pullCloudState(false);
+          if (showMessage) showToast("正在读取云端数据");
+          return;
+        }
         state.lastUpdated = new Date().toISOString();
         saveState();
         render();
