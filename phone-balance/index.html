@@ -36,6 +36,10 @@
             <span>最早可用至</span>
             <strong id="overviewSoonest">--</strong>
           </div>
+          <div>
+            <span>每月月费合计</span>
+            <strong class="money"><small>¥</small><span id="overviewMonthlyCost">--</span></strong>
+          </div>
         </div>
         <p class="overview-note" id="overviewNote">当日费用尚未扣除，页面只根据本地保存余额进行估算。</p>
         <p class="overview-time">最后更新 <span class="mono" id="homeUpdated">--</span></p>
@@ -138,7 +142,16 @@
             <div class="form-actions single">
               <button type="button" id="addRechargeBtn">加入余额</button>
             </div>
-            <p>充值会直接加入当前账号余额，不记录明细，避免长期占用本地存储。</p>
+            <section class="recharge-records" aria-labelledby="rechargeRecordsTitle">
+              <div class="records-heading">
+                <h3 id="rechargeRecordsTitle">充值记录</h3>
+                <span>共 <strong id="rechargeRecordCount">0</strong> 笔</span>
+              </div>
+              <div id="rechargeRecords" class="recharge-record-list">
+                <p class="empty-records">暂无充值记录</p>
+              </div>
+            </section>
+            <p>充值会直接加入当前账号余额，并记录充值时间、金额和充值后余额。修改或删除记录会同步调整当前余额。</p>
           </div>
         </details>
 

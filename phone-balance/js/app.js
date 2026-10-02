@@ -39,7 +39,8 @@
             balance: 47.68,
             lastSettledDate: "2026-06-15",
             monthlyCharge: 28,
-            warningThreshold: 10
+            warningThreshold: 10,
+            rechargeRecords: []
           },
           {
             id: "telecom-19929896163",
@@ -50,7 +51,8 @@
             balance: 167,
             lastSettledDate: "2026-06-15",
             monthlyCharge: 59,
-            warningThreshold: 20
+            warningThreshold: 20,
+            rechargeRecords: []
           },
           {
             id: "telecom-17719749522",
@@ -61,7 +63,8 @@
             balance: 77,
             lastSettledDate: "2026-06-15",
             monthlyCharge: 59,
-            warningThreshold: 20
+            warningThreshold: 20,
+            rechargeRecords: []
           },
           {
             id: "unicom-02901185603",
@@ -72,7 +75,8 @@
             balance: 35,
             lastSettledDate: "2026-06-15",
             dailyCharge: 1,
-            warningThreshold: 7
+            warningThreshold: 7,
+            rechargeRecords: []
           },
           {
             id: "mobile-13891108369",
@@ -83,7 +87,8 @@
             balance: 193.92,
             lastSettledDate: "2026-06-15",
             monthlyCharge: 8,
-            warningThreshold: 10
+            warningThreshold: 10,
+            rechargeRecords: []
           },
           {
             id: "mobile-13892179959",
@@ -94,7 +99,8 @@
             balance: 73.64,
             lastSettledDate: "2026-06-15",
             monthlyCharge: 11,
-            warningThreshold: 10
+            warningThreshold: 10,
+            rechargeRecords: []
           },
           {
             id: "mobile-13468597998",
@@ -105,7 +111,8 @@
             balance: 114.29,
             lastSettledDate: "2026-06-15",
             monthlyCharge: 9,
-            warningThreshold: 10
+            warningThreshold: 10,
+            rechargeRecords: []
           },
           {
             id: "mobile-13474400407",
@@ -116,7 +123,8 @@
             balance: 88.66,
             lastSettledDate: "2026-06-15",
             monthlyCharge: 8,
-            warningThreshold: 10
+            warningThreshold: 10,
+            rechargeRecords: []
           }
         ]
       };
@@ -148,6 +156,7 @@
         overviewWarningTag: document.getElementById("overviewWarningTag"),
         overviewAccounts: document.getElementById("overviewAccounts"),
         overviewSoonest: document.getElementById("overviewSoonest"),
+        overviewMonthlyCost: document.getElementById("overviewMonthlyCost"),
         overviewNote: document.getElementById("overviewNote"),
         warningSection: document.getElementById("warningSection"),
         warningSummary: document.getElementById("warningSummary"),
@@ -183,6 +192,7 @@
         notifySummary: document.getElementById("notifySummary"),
         rechargeAmountInput: document.getElementById("rechargeAmountInput"),
         addRechargeBtn: document.getElementById("addRechargeBtn"),
+        rechargeRecords: document.getElementById("rechargeRecords"),
         syncNowBtn: document.getElementById("syncNowBtn"),
         syncMode: document.getElementById("syncMode"),
         syncTitle: document.getElementById("syncTitle"),
@@ -260,6 +270,7 @@
           var account = source[fallback.id];
           if (account && typeof account === "object") {
             output[fallback.id] = normalizeAccount(Object.assign({}, fallback, account), fallback);
+            output[fallback.id].rechargeRecords = [];
           }
         });
         return output;
@@ -272,11 +283,32 @@
         account.warningThreshold = safeNumber(account.warningThreshold, fallback.warningThreshold || 0);
         account.billingType = normalizeBillingType(account.billingType, fallback.billingType, account.carrier);
         account.lastSettledDate = isDateKey(account.lastSettledDate) ? account.lastSettledDate : fallback.lastSettledDate;
+        account.rechargeRecords = normalizeRechargeRecords(account.rechargeRecords);
         account.modifiedAt = typeof account.modifiedAt === "string"
           ? account.modifiedAt
           : (typeof fallback.modifiedAt === "string" ? fallback.modifiedAt : "");
         applyDefaultWarningSettings(account, fallback);
         return account;
+      }
+
+      function normalizeRechargeRecords(input) {
+        if (!Array.isArray(input)) return [];
+        return input.map(function (record, index) {
+          if (!record || typeof record !== "object") return null;
+          var amount = Number(record.amount);
+          if (!Number.isFinite(amount) || amount <= 0) return null;
+          var createdAt = typeof record.createdAt === "string" && !Number.isNaN(new Date(record.createdAt).getTime())
+            ? record.createdAt
+            : new Date(0).toISOString();
+          return {
+            id: String(record.id || ("legacy-recharge-" + index + "-" + createdAt)),
+            createdAt: createdAt,
+            amount: roundMoney(amount),
+            balanceAfter: roundMoney(safeNumber(record.balanceAfter, amount))
+          };
+        }).filter(Boolean).sort(function (left, right) {
+          return new Date(left.createdAt).getTime() - new Date(right.createdAt).getTime();
+        });
       }
 
       function defaultWarningSettings(account) {
@@ -357,7 +389,7 @@
       function serializeCloudState(snapshot) {
         var source = normalizeState(snapshot || state);
         return {
-          schemaVersion: 4,
+          schemaVersion: 5,
           modifiedAt: source.modifiedAt,
           lastUpdated: source.lastUpdated,
           notificationHistory: normalizeNotificationHistory(source.notificationHistory),
@@ -393,7 +425,15 @@
           warningCooldownHours: roundMoney(account.warningCooldownHours || 24),
           warningChannel: account.warningChannel || "all",
           warningLastNotifiedAt: account.warningLastNotifiedAt || "",
-          modifiedAt: account.modifiedAt || ""
+          modifiedAt: account.modifiedAt || "",
+          rechargeRecords: normalizeRechargeRecords(account.rechargeRecords).map(function (record) {
+            return {
+              id: record.id,
+              createdAt: record.createdAt,
+              amount: roundMoney(record.amount),
+              balanceAfter: roundMoney(record.balanceAfter)
+            };
+          })
         };
       }
 
@@ -1119,6 +1159,11 @@
         var total = roundMoney(items.reduce(function (sum, item) {
           return sum + item.data.balance;
         }, 0));
+        var monthlyCost = roundMoney(items.reduce(function (sum, item) {
+          return sum + (item.account.billingType === "daily"
+            ? item.account.dailyCharge * item.data.monthDays
+            : item.account.monthlyCharge);
+        }, 0));
         var warnings = items.filter(function (item) {
           return item.data.warning;
         });
@@ -1132,6 +1177,7 @@
 
         return {
           total: total,
+          monthlyCost: monthlyCost,
           accountCount: items.length,
           warnings: warnings,
           soonest: soonest
@@ -1194,6 +1240,9 @@
 
         els.overviewBalance.textContent = money(stats.total, 2);
         els.overviewAccounts.textContent = stats.accountCount + " 个";
+        if (els.overviewMonthlyCost) {
+          els.overviewMonthlyCost.textContent = money(stats.monthlyCost, 2);
+        }
         els.overviewWarningTag.textContent = warningCount > 0 ? warningCount + " 个预警" : "全部正常";
         if (soonestLabel) {
           soonestLabel.textContent = "最早需要关注";
@@ -1202,10 +1251,8 @@
           ? ('<span class="soonest-main">' + escapeHtml(soonestDate) + '</span><small>' + escapeHtml(soonestTitle) + '</small>')
           : "--";
         els.overviewNote.textContent = warningCount > 0
-          ? "已有账号触发提醒规则，建议优先查看预警账号；本页仅做本地估算，不代表运营商实时余额。"
-          : (soonest
-            ? ("最早需要关注的是 " + CARRIERS[soonest.account.carrier].name + " " + soonest.account.number + "，页面仅做本地估算。")
-            : "当日费用尚未扣除，页面只根据本地保存余额进行估算。");
+          ? "已有账号触发提醒规则，建议查看预警账号；本页仅做本地估算，不代表运营商实时余额。"
+          : "当日费用尚未扣除，页面只根据本地保存余额进行估算。";
         els.overviewCard.classList.toggle("warning", warningCount > 0);
       }
 
@@ -1319,8 +1366,43 @@
         if (els.notifySummary) {
           els.notifySummary.textContent = data.warningRuleText;
         }
+        renderRechargeRecords(account);
         els.chargeInputLabel.textContent = account.billingType === "daily" ? "每日固定扣款金额（元）" : (account.billingType === "monthEnd" ? "月末固定扣款金额（元）" : "每月固定扣款金额（元）");
         els.detailUpdated.textContent = formatDateTime(state.lastUpdated);
+      }
+
+      function fullDateTime(value) {
+        var date = new Date(value);
+        if (Number.isNaN(date.getTime())) return "未知时间";
+        return date.getFullYear() + "-" + pad(date.getMonth() + 1) + "-" + pad(date.getDate())
+          + " " + pad(date.getHours()) + ":" + pad(date.getMinutes());
+      }
+
+      function renderRechargeRecords(account) {
+        if (!els.rechargeRecords) return;
+        var records = normalizeRechargeRecords(account.rechargeRecords);
+        var count = document.getElementById("rechargeRecordCount");
+        if (count) count.textContent = String(records.length);
+        if (!records.length) {
+          els.rechargeRecords.innerHTML = '<p class="empty-records">暂无充值记录</p>';
+          return;
+        }
+
+        els.rechargeRecords.innerHTML = records.slice().reverse().map(function (record) {
+          return ''
+            + '<div class="recharge-record" data-record-id="' + escapeHtml(record.id) + '">'
+            + '  <div class="recharge-record-meta">'
+            + '    <strong>' + escapeHtml(fullDateTime(record.createdAt)) + '</strong>'
+            + '    <span>充值后余额 <b class="mono">¥' + money(record.balanceAfter, 2) + '</b></span>'
+            + '  </div>'
+            + '  <div class="recharge-record-actions">'
+            + '    <label class="sr-only" for="recharge-' + escapeHtml(record.id) + '">充值金额</label>'
+            + '    <input id="recharge-' + escapeHtml(record.id) + '" class="recharge-record-input" type="number" inputmode="decimal" min="0.01" step="0.01" value="' + money(record.amount, 2) + '">'
+            + '    <button class="record-save" type="button" data-action="save-recharge" data-record-id="' + escapeHtml(record.id) + '" title="保存修改" aria-label="保存修改">保存</button>'
+            + '    <button class="record-delete" type="button" data-action="delete-recharge" data-record-id="' + escapeHtml(record.id) + '" title="删除记录" aria-label="删除记录">×</button>'
+            + '  </div>'
+            + '</div>';
+        }).join("");
       }
 
       function render() {
@@ -1449,6 +1531,7 @@
 
           var fallback = builtInDefaultAccountById(account.id) || account;
           var nextDefault = normalizeAccount(Object.assign({}, fallback, account), fallback);
+          nextDefault.rechargeRecords = [];
           applySettingsToAccount(nextDefault, values);
           state.accountDefaults = state.accountDefaults || {};
           state.accountDefaults[account.id] = nextDefault;
@@ -1470,9 +1553,17 @@
           var account = accountById(activeAccountId);
           if (!account) return;
 
+          amount = roundMoney(amount);
           account.balance = roundMoney(account.balance + amount);
           account.lastSettledDate = addDays(todayKey(), -1);
           var now = new Date().toISOString();
+          account.rechargeRecords = normalizeRechargeRecords(account.rechargeRecords);
+          account.rechargeRecords.push({
+            id: "recharge-" + Date.now() + "-" + Math.random().toString(36).slice(2, 8),
+            createdAt: now,
+            amount: amount,
+            balanceAfter: account.balance
+          });
           account.modifiedAt = now;
           state.lastUpdated = now;
           state.modifiedAt = now;
@@ -1481,6 +1572,76 @@
           els.rechargeAmountInput.value = "";
           render();
           showToast("充值已加入余额");
+        });
+      }
+
+      function findRechargeRecord(account, recordId) {
+        account.rechargeRecords = normalizeRechargeRecords(account.rechargeRecords);
+        return account.rechargeRecords.find(function (record) {
+          return record.id === recordId;
+        });
+      }
+
+      function adjustLaterRechargeBalances(account, record, delta) {
+        account.rechargeRecords.forEach(function (item) {
+          if (new Date(item.createdAt).getTime() >= new Date(record.createdAt).getTime()) {
+            item.balanceAfter = roundMoney(item.balanceAfter + delta);
+          }
+        });
+      }
+
+      function saveRechargeRecord(recordId) {
+        var row = els.rechargeRecords && Array.prototype.find.call(
+          els.rechargeRecords.querySelectorAll("[data-record-id]"),
+          function (item) { return item.getAttribute("data-record-id") === recordId; }
+        );
+        var input = row && row.querySelector(".recharge-record-input");
+        var amount = input ? Number(input.value) : NaN;
+        if (!Number.isFinite(amount) || amount <= 0) return showToast("请输入有效充值金额");
+
+        runAfterCloudWriteCheck(function () {
+          var account = accountById(activeAccountId);
+          var record = account && findRechargeRecord(account, recordId);
+          if (!account || !record) return;
+          amount = roundMoney(amount);
+          var delta = roundMoney(amount - record.amount);
+          if (delta === 0) return showToast("充值记录没有变化");
+
+          account.balance = roundMoney(account.balance + delta);
+          record.amount = amount;
+          adjustLaterRechargeBalances(account, record, delta);
+          var now = new Date().toISOString();
+          account.modifiedAt = now;
+          state.lastUpdated = now;
+          state.modifiedAt = now;
+          saveState();
+          flushCloudPush(false);
+          render();
+          showToast("充值记录已修改");
+        });
+      }
+
+      function deleteRechargeRecord(recordId) {
+        if (!window.confirm("删除这笔充值记录后，当前余额会扣回对应金额，是否继续？")) return;
+
+        runAfterCloudWriteCheck(function () {
+          var account = accountById(activeAccountId);
+          var record = account && findRechargeRecord(account, recordId);
+          if (!account || !record) return;
+
+          account.balance = roundMoney(account.balance - record.amount);
+          adjustLaterRechargeBalances(account, record, -record.amount);
+          account.rechargeRecords = account.rechargeRecords.filter(function (item) {
+            return item.id !== recordId;
+          });
+          var now = new Date().toISOString();
+          account.modifiedAt = now;
+          state.lastUpdated = now;
+          state.modifiedAt = now;
+          saveState();
+          flushCloudPush(false);
+          render();
+          showToast("充值记录已删除");
         });
       }
 
@@ -1540,6 +1701,12 @@
         }
         if (action === "detail") {
           navigateDetail(actionTarget.getAttribute("data-id"));
+        }
+        if (action === "save-recharge") {
+          saveRechargeRecord(actionTarget.getAttribute("data-record-id"));
+        }
+        if (action === "delete-recharge") {
+          deleteRechargeRecord(actionTarget.getAttribute("data-record-id"));
         }
       });
 
