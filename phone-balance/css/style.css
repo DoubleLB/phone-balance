@@ -279,7 +279,7 @@
 
     .overview-grid {
       display: grid;
-      grid-template-columns: minmax(0, 0.8fr) minmax(0, 1.1fr) minmax(0, 1fr);
+      grid-template-columns: repeat(2, minmax(0, 1fr));
       gap: 8px;
       margin-top: 18px;
     }
@@ -292,7 +292,7 @@
       padding: 10px;
     }
 
-    .overview-grid span,
+    .overview-grid > div > span,
     .overview-note {
       display: block;
       font-size: 12px;
@@ -310,29 +310,13 @@
     }
 
     .overview-grid strong small {
+      display: inline;
       font-size: 0.65em;
       font-weight: 900;
     }
 
-    #overviewSoonest {
-      white-space: normal;
-      font-size: 16px;
-      line-height: 1.25;
-    }
-
-    #overviewSoonest .soonest-main {
-      display: block;
-      font-size: clamp(17px, 4.8vw, 20px);
-      line-height: 1.15;
-    }
-
-    #overviewSoonest small {
-      display: block;
-      margin-top: 3px;
-      color: rgba(22, 65, 82, 0.68);
-      font-size: 11px;
-      line-height: 1.35;
-      font-weight: 800;
+    .overview-grid strong span {
+      display: inline;
     }
 
     .overview-note {
@@ -1344,8 +1328,7 @@
 
     @media (max-width: 360px) {
       .metrics,
-      .balance-sub,
-      .overview-grid {
+      .balance-sub {
         grid-template-columns: 1fr;
       }
 

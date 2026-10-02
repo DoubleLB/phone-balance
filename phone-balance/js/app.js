@@ -155,7 +155,6 @@
         overviewBalance: document.getElementById("overviewBalance"),
         overviewWarningTag: document.getElementById("overviewWarningTag"),
         overviewAccounts: document.getElementById("overviewAccounts"),
-        overviewSoonest: document.getElementById("overviewSoonest"),
         overviewMonthlyCost: document.getElementById("overviewMonthlyCost"),
         overviewNote: document.getElementById("overviewNote"),
         warningSection: document.getElementById("warningSection"),
@@ -1167,20 +1166,11 @@
         var warnings = items.filter(function (item) {
           return item.data.warning;
         });
-        var soonest = items.reduce(function (best, item) {
-          if (!best) return item;
-          if (compareKeys(item.data.until, best.data.until) !== 0) {
-            return compareKeys(item.data.until, best.data.until) < 0 ? item : best;
-          }
-          return item.data.balance < best.data.balance ? item : best;
-        }, null);
-
         return {
           total: total,
           monthlyCost: monthlyCost,
           accountCount: items.length,
-          warnings: warnings,
-          soonest: soonest
+          warnings: warnings
         };
       }
 
@@ -1233,23 +1223,12 @@
 
       function renderOverview(stats) {
         var warningCount = stats.warnings.length;
-        var soonest = stats.soonest;
-        var soonestLabel = els.overviewSoonest && els.overviewSoonest.parentNode ? els.overviewSoonest.parentNode.querySelector("span") : null;
-        var soonestTitle = soonest ? (CARRIERS[soonest.account.carrier].name + " · " + soonest.account.number) : "";
-        var soonestDate = soonest ? (soonest.data.until ? readableDate(soonest.data.until) : "今天") : "--";
-
         els.overviewBalance.textContent = money(stats.total, 2);
         els.overviewAccounts.textContent = stats.accountCount + " 个";
         if (els.overviewMonthlyCost) {
           els.overviewMonthlyCost.textContent = money(stats.monthlyCost, 2);
         }
         els.overviewWarningTag.textContent = warningCount > 0 ? warningCount + " 个预警" : "全部正常";
-        if (soonestLabel) {
-          soonestLabel.textContent = "最早需要关注";
-        }
-        els.overviewSoonest.innerHTML = soonest
-          ? ('<span class="soonest-main">' + escapeHtml(soonestDate) + '</span><small>' + escapeHtml(soonestTitle) + '</small>')
-          : "--";
         els.overviewNote.textContent = warningCount > 0
           ? "已有账号触发提醒规则，建议查看预警账号；本页仅做本地估算，不代表运营商实时余额。"
           : "当日费用尚未扣除，页面只根据本地保存余额进行估算。";
