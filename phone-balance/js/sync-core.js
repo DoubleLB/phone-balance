@@ -38,6 +38,13 @@
       if (!record || !record.id) return record;
       localIds[record.id] = true;
       var remoteRecord = remoteById[record.id];
+      // Deletion is terminal for this ID, even if a stale device settles it later.
+      if (record.deleted) return record;
+      if (remoteRecord && remoteRecord.deleted) return clone(remoteRecord);
+      // A manual edit outranks a later automatic settlement of an older snapshot.
+      var localEdit = timeValue(record.userModifiedAt);
+      var remoteEdit = timeValue(remoteRecord && remoteRecord.userModifiedAt);
+      if (remoteRecord && remoteEdit !== localEdit) return remoteEdit > localEdit ? clone(remoteRecord) : record;
       if (remoteRecord && recordModifiedTime(remoteRecord) > recordModifiedTime(record)) {
         return clone(remoteRecord);
       }

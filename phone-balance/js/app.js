@@ -5,6 +5,8 @@
       if (!billing) throw new Error("Billing core is not loaded.");
       var syncCore = window.PhoneBalanceSync;
       if (!syncCore) throw new Error("Sync core is not loaded.");
+      var accountsCore = window.PhoneBalanceAccounts;
+      if (!accountsCore) throw new Error("Accounts core is not loaded.");
 
       var STORAGE_KEY = "phone_balance_overview_v3";
       var CLOUD_MARKER_KEY = STORAGE_KEY + "_cloud_synced_v1";
@@ -133,6 +135,9 @@
       var hasCloudSyncMarker = false;
       var state = loadState();
       var activeAccountId = "";
+      var editingAccountId = "";
+      var editingAccountVersion = "";
+      var editingAccountBalance = "";
       var lastRenderedDate = "";
       var currentRoute = parseRoute();
       var homeScrollY = 0;
@@ -235,20 +240,12 @@
       function normalizeState(input) {
         var next = Object.assign(rawDefaultState(), input || {});
         var defaults = rawDefaultState().accounts;
-        var byId = {};
-
-        (Array.isArray(input && input.accounts) ? input.accounts : []).forEach(function (account) {
-          byId[account.id] = account;
-        });
-
-        next.accounts = defaults.map(function (account) {
-          return normalizeAccount(Object.assign({}, account, byId[account.id] || {}), account);
-        });
+        next.accounts = accountsCore.normalizeAccounts(input && input.accounts, defaults, CARRIERS, normalizeAccount);
 
         next.openCarriers = Array.isArray(next.openCarriers) ? next.openCarriers.filter(function (carrier) {
           return Boolean(CARRIERS[carrier]);
         }) : ["broadcasting"];
-        next.accountDefaults = normalizeAccountDefaults(input && input.accountDefaults, defaults);
+        next.accountDefaults = normalizeAccountDefaults(input && input.accountDefaults, next.accounts);
         next.notificationHistory = normalizeNotificationHistory(input && input.notificationHistory);
         next.lastUpdated = next.lastUpdated || DEFAULT_STATE.lastUpdated;
         next.modifiedAt = next.modifiedAt || next.lastUpdated || DEFAULT_STATE.modifiedAt;
@@ -276,12 +273,19 @@
       }
 
       function normalizeAccount(account, fallback) {
+        account.number = String(account.number || "");
+        account.type = account.type === "宽带账号" ? "宽带账号" : "手机号";
+        account.status = account.status === "paused" || account.status === "closed" ? account.status : "active";
+        account.hidden = account.hidden === true;
+        account.deleted = account.deleted === true;
+        account.userModifiedAt = typeof account.userModifiedAt === "string" ? account.userModifiedAt : "";
         account.balance = safeNumber(account.balance, fallback.balance);
         account.monthlyCharge = safeNumber(account.monthlyCharge, fallback.monthlyCharge || 0);
         account.dailyCharge = safeNumber(account.dailyCharge, fallback.dailyCharge || 0);
         account.warningThreshold = safeNumber(account.warningThreshold, fallback.warningThreshold || 0);
         account.billingType = normalizeBillingType(account.billingType, fallback.billingType, account.carrier);
-        account.lastSettledDate = isDateKey(account.lastSettledDate) ? account.lastSettledDate : fallback.lastSettledDate;
+        account.lastSettledDate = isDateKey(account.lastSettledDate) ? account.lastSettledDate
+          : (fallback.lastSettledDate || addDays(todayKey(), -1));
         account.rechargeRecords = normalizeRechargeRecords(account.rechargeRecords);
         account.modifiedAt = typeof account.modifiedAt === "string"
           ? account.modifiedAt
@@ -369,9 +373,6 @@
       }
 
       function normalizeBillingType(value, fallback, carrierKey) {
-        if ((carrierKey === "telecom" || carrierKey === "mobile") && value === "monthly") {
-          return "monthEnd";
-        }
         if (value === "daily" || value === "monthly" || value === "monthEnd") return value;
         return fallback || "monthly";
       }
@@ -388,7 +389,7 @@
       function serializeCloudState(snapshot) {
         var source = normalizeState(snapshot || state);
         return {
-          schemaVersion: 5,
+          schemaVersion: 6,
           modifiedAt: source.modifiedAt,
           lastUpdated: source.lastUpdated,
           notificationHistory: normalizeNotificationHistory(source.notificationHistory),
@@ -414,6 +415,10 @@
           type: account.type,
           number: account.number,
           billingType: account.billingType,
+          status: account.status || "active",
+          hidden: account.hidden === true,
+          deleted: account.deleted === true,
+          userModifiedAt: account.userModifiedAt || "",
           balance: roundMoney(account.balance),
           lastSettledDate: account.lastSettledDate,
           monthlyCharge: roundMoney(account.monthlyCharge || 0),
@@ -627,10 +632,6 @@
         return JSON.stringify(serializeCloudState(left)) === JSON.stringify(serializeCloudState(right));
       }
 
-      function stateModifiedTime(snapshot) {
-        return timeValue(snapshot && (snapshot.modifiedAt || snapshot.lastUpdated));
-      }
-
       function buildLegacyMergedState(remoteData, baseState, rowUpdatedAt) {
         if (!remoteData || (remoteData.anchorBalance == null && remoteData.monthlyCharge == null && remoteData.warningThreshold == null && !remoteData.lastSettledDate)) {
           return null;
@@ -737,12 +738,6 @@
         els.syncLastAt.textContent = syncState.syncedAt ? formatDateTime(syncState.syncedAt) : "--";
       }
 
-      function isRemoteNewer(remoteState, localState) {
-        var remoteTime = stateModifiedTime(remoteState);
-        var localTime = stateModifiedTime(localState);
-        return remoteTime > localTime;
-      }
-
       function checkCloudWriteConflict() {
         if (!isCloudConfigured()) return Promise.resolve(false);
         if (!cloudHydrated) {
@@ -773,7 +768,7 @@
             cloudReady = true;
             if (remoteState) markCloudSynced();
 
-            if (remoteState && isRemoteNewer(remoteState, localState)) {
+            if (remoteState) {
               state = mergeRemoteIntoLocalState(localState, remoteState);
               settleAll();
               saveState();
@@ -1117,7 +1112,7 @@
 
       function carrierAccounts(carrierKey) {
         return state.accounts.filter(function (account) {
-          return account.carrier === carrierKey;
+          return account.carrier === carrierKey && accountsCore.isVisible(account);
         });
       }
 
@@ -1129,7 +1124,7 @@
 
       function accountById(id) {
         return state.accounts.find(function (account) {
-          return account.id === id;
+          return account.id === id && !account.deleted;
         });
       }
 
@@ -1145,7 +1140,9 @@
       }
 
       function computedAccounts() {
-        return state.accounts.map(function (account) {
+        return state.accounts.filter(function (account) {
+          return accountsCore.isVisible(account);
+        }).map(function (account) {
           return {
             account: account,
             carrier: CARRIERS[account.carrier],
@@ -1159,9 +1156,7 @@
           return sum + item.data.balance;
         }, 0));
         var monthlyCost = roundMoney(items.reduce(function (sum, item) {
-          return sum + (item.account.billingType === "daily"
-            ? item.account.dailyCharge * item.data.monthDays
-            : item.account.monthlyCharge);
+          return sum + accountsCore.monthlyCost(item.account, item.data.monthDays);
         }, 0));
         var warnings = items.filter(function (item) {
           return item.data.warning;
@@ -1189,6 +1184,7 @@
         var items = computedAccounts();
         renderOverview(overviewStats(items));
         renderWarnings(items);
+        renderAccountManager();
         els.homeUpdated.textContent = formatDateTime(state.lastUpdated);
         els.toggleAllBtn.textContent = areAllCarriersOpen() ? "全部收起" : "全部展开";
         els.carrierList.innerHTML = keys.map(function (carrierKey) {
@@ -1196,6 +1192,7 @@
           var accounts = carrierAccounts(carrierKey);
           var open = isCarrierOpen(carrierKey);
           var rows = accounts.map(renderAccountRow).join("");
+          if (!accounts.length) rows = '<p class="empty-records">暂无显示中的账号</p>';
           return ''
             + '<article class="carrier-card' + (open ? " open" : "") + '" style="--carrier-color:' + carrier.color + '">'
             + '  <button class="carrier-main" type="button" data-action="toggle-carrier" data-carrier="' + carrierKey + '">'
@@ -1235,6 +1232,150 @@
         els.overviewCard.classList.toggle("warning", warningCount > 0);
       }
 
+      function statusText(account) {
+        return account.status === "closed" ? "已注销" : (account.status === "paused" ? "已停用" : "使用中");
+      }
+
+      function nextModificationTime(account) {
+        return new Date(Math.max(Date.now(), timeValue(state.modifiedAt) + 1,
+          accountModifiedTime(account) + 1)).toISOString();
+      }
+
+      function renderAccountManager() {
+        var accounts = state.accounts.filter(function (account) { return !account.deleted; });
+        document.getElementById("managedAccountCount").textContent = "全部 " + accounts.length + " 个账号（含隐藏）";
+        document.getElementById("managedAccounts").innerHTML = accounts.map(function (account) {
+          return '<div class="managed-account"><div><strong class="number">' + escapeHtml(account.number)
+            + '</strong><p>' + escapeHtml(CARRIERS[account.carrier].name) + ' · ' + statusText(account)
+            + (account.hidden ? ' · 已隐藏' : '') + '</p></div><div class="manager-actions">'
+            + '<button type="button" class="secondary" data-action="edit-account" data-id="' + escapeHtml(account.id) + '">编辑</button>'
+            + '<button type="button" class="secondary" data-action="toggle-account" data-id="' + escapeHtml(account.id) + '">'
+            + (account.hidden ? '显示' : '隐藏') + '</button>'
+            + '<button type="button" class="secondary manager-delete" data-action="delete-account" data-id="' + escapeHtml(account.id) + '">删除</button>'
+            + '</div></div>';
+        }).join("") || '<p class="empty-records">暂无账号</p>';
+      }
+
+      function updateAccountFeeLabel() {
+        document.getElementById("accountFeeLabel").textContent = document.getElementById("accountBilling").value === "daily" ? "日费（元）" : "月费（元）";
+      }
+
+      function openAccountEditor(id) {
+        var account = id ? accountById(id) : null;
+        if (id && !account) return showToast("账号已不存在");
+        editingAccountId = account ? account.id : "";
+        editingAccountVersion = account ? account.modifiedAt : "";
+        editingAccountBalance = account ? money(account.balance, 2) : "0.00";
+        document.getElementById("accountFormTitle").textContent = account ? "编辑账号" : "新增账号";
+        document.getElementById("accountNumber").value = account ? account.number : "";
+        document.getElementById("accountCarrier").value = account ? account.carrier : "broadcasting";
+        document.getElementById("accountType").value = account ? account.type : "手机号";
+        document.getElementById("accountBilling").value = account ? account.billingType : "monthly";
+        document.getElementById("accountFee").value = account ? (account.billingType === "daily" ? account.dailyCharge : account.monthlyCharge) : 28;
+        document.getElementById("accountBalance").value = editingAccountBalance;
+        document.getElementById("accountStatus").value = account ? account.status : "active";
+        document.getElementById("accountHidden").checked = Boolean(account && account.hidden);
+        updateAccountFeeLabel();
+        document.getElementById("accountForm").classList.remove("hidden");
+        document.getElementById("accountManager").open = true;
+        if (parseRoute().accountId) window.location.hash = "home";
+        window.setTimeout(function () {
+          document.getElementById("accountForm").scrollIntoView({ block: "start", behavior: "smooth" });
+          document.getElementById("accountNumber").focus({ preventScroll: true });
+        }, 100);
+      }
+
+      function persistAccountChange(account, message) {
+        var now = nextModificationTime(account);
+        account.modifiedAt = now;
+        account.userModifiedAt = now;
+        state.modifiedAt = now;
+        state.lastUpdated = now;
+        saveState();
+        render();
+        flushCloudPush(false).then(function (saved) {
+          showToast(saved ? message + "，已同步" : message + "；请查看云端同步状态");
+        });
+      }
+
+      function saveAccountForm(event) {
+        event.preventDefault();
+        var number = document.getElementById("accountNumber").value.trim();
+        var carrier = document.getElementById("accountCarrier").value;
+        var type = document.getElementById("accountType").value;
+        var billingType = document.getElementById("accountBilling").value;
+        var fee = Number(document.getElementById("accountFee").value);
+        var balanceText = document.getElementById("accountBalance").value;
+        var balance = Number(balanceText);
+        var status = document.getElementById("accountStatus").value;
+        var hidden = document.getElementById("accountHidden").checked;
+        var editId = editingAccountId;
+        var editVersion = editingAccountVersion;
+        var originalBalance = editingAccountBalance;
+        if (!number || !CARRIERS[carrier] || !Number.isFinite(fee) || fee < 0 || !Number.isFinite(balance)) return showToast("请填写有效账号和金额");
+
+        runAfterCloudWriteCheck(function () {
+          var account = editId ? accountById(editId) : null;
+          if (editId && (!account || account.modifiedAt !== editVersion)) {
+            return showToast("该账号已更新，请重新点击编辑后保存");
+          }
+          if (state.accounts.some(function (item) { return !item.deleted && item.id !== editId && item.carrier === carrier && item.number === number; })) {
+            return showToast("该运营商下已存在相同账号");
+          }
+          var creating = !account;
+          if (creating) {
+            account = normalizeAccount({ id: "account-" + Date.now() + "-" + Math.random().toString(36).slice(2, 10),
+              carrier: carrier, number: number, type: type, billingType: billingType,
+              balance: balance, lastSettledDate: addDays(todayKey(), -1) }, {});
+            state.accounts.push(account);
+          }
+          accountsCore.changeStatus(account, status, todayKey(), billing);
+          account.carrier = carrier;
+          account.number = number;
+          account.type = type;
+          account.billingType = billingType;
+          account.monthlyCharge = billingType === "daily" ? 0 : roundMoney(fee);
+          account.dailyCharge = billingType === "daily" ? roundMoney(fee) : 0;
+          account.hidden = hidden;
+          if (creating || balanceText !== originalBalance) {
+            account.balance = roundMoney(balance);
+            account.lastSettledDate = addDays(todayKey(), -1);
+          }
+          if (creating) {
+            state.accountDefaults[account.id] = cloneStateSnapshot(account);
+            state.accountDefaults[account.id].modifiedAt = nextModificationTime(account);
+          }
+          if (!hidden && state.openCarriers.indexOf(carrier) < 0) state.openCarriers.push(carrier);
+          document.getElementById("accountForm").classList.add("hidden");
+          persistAccountChange(account, creating ? "账号已新增" : "账号已更新");
+        });
+      }
+
+      function toggleAccountHidden(id) {
+        runAfterCloudWriteCheck(function () {
+          var account = accountById(id);
+          if (!account) return;
+          account.hidden = !account.hidden;
+          persistAccountChange(account, account.hidden ? "账号已隐藏" : "账号已显示");
+        });
+      }
+
+      function deleteAccount(id) {
+        var current = accountById(id);
+        if (!current || !window.confirm("删除 " + current.number + "？该账号及充值记录将移除，并停止计费和提醒。")) return;
+        runAfterCloudWriteCheck(function () {
+          var account = accountById(id);
+          if (!account) return;
+          account.deleted = true;
+          account.status = "closed";
+          account.hidden = true;
+          account.rechargeRecords = [];
+          delete state.accountDefaults[id];
+          if (editingAccountId === id) document.getElementById("accountForm").classList.add("hidden");
+          persistAccountChange(account, "账号已删除");
+        });
+      }
+
       function renderWarnings(items) {
         var warnings = items.filter(function (item) {
           return item.data.warning;
@@ -1269,11 +1410,11 @@
           + '<div class="account-row' + (data.warning ? " warning" : "") + '" style="--carrier-color:' + carrier.color + '">'
           + '  <div>'
           + '    <h3 class="number">' + escapeHtml(account.number) + '</h3>'
-          + '    <p>' + escapeHtml(account.type) + ' · ' + escapeHtml(carrier.name) + ' · ' + escapeHtml(data.feeStandardText) + '</p>'
+          + '    <p>' + escapeHtml(account.type) + ' · ' + escapeHtml(carrier.name) + ' · ' + escapeHtml(accountsCore.isActive(account) ? data.feeStandardText : "停止计费与提醒") + '</p>'
           + '    <div class="row-money money">¥' + money(data.balance, 2) + '</div>'
           + '  </div>'
           + '  <div class="row-side">'
-          + '    <span class="days-chip' + (data.warning ? " warning" : "") + '">' + (data.warning ? "预警 · " : "") + escapeHtml(data.attentionLabel) + '</span>'
+            + '    <span class="days-chip' + (data.warning ? " warning" : "") + '">' + (accountsCore.isActive(account) ? ((data.warning ? "预警 · " : "") + escapeHtml(data.attentionLabel)) : statusText(account)) + '</span>'
           + '    <button class="detail-btn" type="button" data-action="detail" data-id="' + escapeHtml(account.id) + '">详情</button>'
           + '  </div>'
           + '</div>';
@@ -1287,7 +1428,15 @@
       }
 
       function renderDetail(accountId) {
-        var account = accountById(accountId) || state.accounts[0];
+        var account = accountById(accountId);
+        if (!account) {
+          window.history.replaceState(null, "", "#home");
+          els.detailPage.classList.add("hidden");
+          els.homePage.classList.remove("hidden");
+          renderHome();
+          showToast("该账号已删除或不存在");
+          return;
+        }
         var carrier = CARRIERS[account.carrier];
         var data = computeAccount(account);
         var primaryMetricLabel = els.detailDaysLeft && els.detailDaysLeft.parentNode ? els.detailDaysLeft.parentNode.querySelector("span") : null;
@@ -1348,6 +1497,21 @@
         renderRechargeRecords(account);
         els.chargeInputLabel.textContent = account.billingType === "daily" ? "每日固定扣款金额（元）" : (account.billingType === "monthEnd" ? "月末固定扣款金额（元）" : "每月固定扣款金额（元）");
         els.detailUpdated.textContent = formatDateTime(state.lastUpdated);
+        document.getElementById("accountStatusPill").textContent = accountsCore.isActive(account) ? "今日未扣费" : statusText(account);
+        if (!accountsCore.isActive(account)) {
+          if (primaryMetricLabel) primaryMetricLabel.textContent = "账号状态";
+          els.detailDaysLeft.textContent = statusText(account);
+          if (primaryMetricSubline) primaryMetricSubline.childNodes[0].nodeValue = "计费 ";
+          els.detailUntil.textContent = "已停止";
+          els.dailyFee.textContent = "已停止计费";
+          els.settledDays.textContent = "—";
+          els.monthSettledFee.textContent = "—";
+          if (chargeDetailHint) chargeDetailHint.textContent = "已停止自动计费和通知提醒，恢复使用后从当天继续计费。";
+          els.warningText.textContent = "";
+          els.notifySummary.textContent = "计费及通知提醒已停止。";
+          els.balancePanel.classList.remove("risk-orange", "risk-red", "risk-green");
+          els.balancePanel.classList.add("risk-blue");
+        }
       }
 
       function fullDateTime(value) {
@@ -1489,8 +1653,9 @@
           if (!account) return;
 
           applySettingsToAccount(account, values);
-          var now = new Date().toISOString();
+          var now = nextModificationTime(account);
           account.modifiedAt = now;
+          account.userModifiedAt = now;
           state.lastUpdated = now;
           state.modifiedAt = now;
           saveState();
@@ -1514,8 +1679,9 @@
           applySettingsToAccount(nextDefault, values);
           state.accountDefaults = state.accountDefaults || {};
           state.accountDefaults[account.id] = nextDefault;
-          var now = new Date().toISOString();
+          var now = nextModificationTime(account);
           nextDefault.modifiedAt = now;
+          nextDefault.userModifiedAt = now;
           state.lastUpdated = now;
           state.modifiedAt = now;
           saveState();
@@ -1535,7 +1701,7 @@
           amount = roundMoney(amount);
           account.balance = roundMoney(account.balance + amount);
           account.lastSettledDate = addDays(todayKey(), -1);
-          var now = new Date().toISOString();
+          var now = nextModificationTime(account);
           account.rechargeRecords = normalizeRechargeRecords(account.rechargeRecords);
           account.rechargeRecords.push({
             id: "recharge-" + Date.now() + "-" + Math.random().toString(36).slice(2, 8),
@@ -1544,6 +1710,7 @@
             balanceAfter: account.balance
           });
           account.modifiedAt = now;
+          account.userModifiedAt = now;
           state.lastUpdated = now;
           state.modifiedAt = now;
           saveState();
@@ -1589,8 +1756,9 @@
           account.balance = roundMoney(account.balance + delta);
           record.amount = amount;
           adjustLaterRechargeBalances(account, record, delta);
-          var now = new Date().toISOString();
+          var now = nextModificationTime(account);
           account.modifiedAt = now;
+          account.userModifiedAt = now;
           state.lastUpdated = now;
           state.modifiedAt = now;
           saveState();
@@ -1613,8 +1781,9 @@
           account.rechargeRecords = account.rechargeRecords.filter(function (item) {
             return item.id !== recordId;
           });
-          var now = new Date().toISOString();
+          var now = nextModificationTime(account);
           account.modifiedAt = now;
+          account.userModifiedAt = now;
           state.lastUpdated = now;
           state.modifiedAt = now;
           saveState();
@@ -1633,12 +1802,13 @@
           if (!account || !fallback) return;
 
           Object.keys(fallback).forEach(function (key) {
-            account[key] = fallback[key];
+            if (["id", "number", "type", "carrier", "status", "hidden", "deleted"].indexOf(key) < 0) account[key] = fallback[key];
           });
           account.lastSettledDate = addDays(todayKey(), -1);
           applyDefaultWarningSettings(account, builtInDefaultAccountById(activeAccountId) || fallback);
-          var now = new Date().toISOString();
+          var now = nextModificationTime(account);
           account.modifiedAt = now;
+          account.userModifiedAt = now;
           state.lastUpdated = now;
           state.modifiedAt = now;
           saveState();
@@ -1687,6 +1857,9 @@
         if (action === "delete-recharge") {
           deleteRechargeRecord(actionTarget.getAttribute("data-record-id"));
         }
+        if (action === "edit-account") openAccountEditor(actionTarget.getAttribute("data-id"));
+        if (action === "toggle-account") toggleAccountHidden(actionTarget.getAttribute("data-id"));
+        if (action === "delete-account") deleteAccount(actionTarget.getAttribute("data-id"));
       });
 
       els.refreshBtn.addEventListener("click", function () {
@@ -1695,6 +1868,19 @@
 
       els.toggleAllBtn.addEventListener("click", toggleAllCarriers);
       els.backBtn.addEventListener("click", navigateHome);
+      document.getElementById("newAccountBtn").addEventListener("click", function () { openAccountEditor(""); });
+      document.getElementById("editAccountBtn").addEventListener("click", function () { openAccountEditor(activeAccountId); });
+      document.getElementById("accountForm").addEventListener("submit", saveAccountForm);
+      document.getElementById("cancelAccountBtn").addEventListener("click", function () {
+        document.getElementById("accountForm").classList.add("hidden");
+      });
+      document.getElementById("accountBilling").addEventListener("change", updateAccountFeeLabel);
+      document.getElementById("accountCarrier").addEventListener("change", function (event) {
+        if (editingAccountId) return;
+        document.getElementById("accountBilling").value = event.target.value === "unicom" ? "daily"
+          : (event.target.value === "broadcasting" ? "monthly" : "monthEnd");
+        updateAccountFeeLabel();
+      });
       els.addRechargeBtn.addEventListener("click", addRecharge);
       if (els.syncNowBtn) {
         els.syncNowBtn.addEventListener("click", syncNow);

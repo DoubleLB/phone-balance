@@ -8,6 +8,9 @@ on:
 jobs:
   notify:
     runs-on: ubuntu-latest
+    concurrency:
+      group: balance-notify
+      cancel-in-progress: false
     env:
       TZ: Asia/Shanghai
       FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
@@ -27,6 +30,12 @@ jobs:
         with:
           node-version: "24"
           package-manager-cache: false
+
+      - name: Check billing and sync regressions
+        run: |
+          node scripts/accounts-regression.mjs
+          node scripts/sync-regression.mjs
+          node scripts/notify-state-regression.mjs
 
       - name: Run notification worker
         run: node scripts/wxpusher-notify.mjs

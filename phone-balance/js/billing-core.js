@@ -62,6 +62,7 @@
   }
 
   function dailyFeeFor(account, key) {
+    if (!isActive(account)) return 0;
     if (account.billingType === "daily") return safeNumber(account.dailyCharge, 0);
     if (account.billingType === "monthEnd") return 0;
     var parts = partsFromKey(key);
@@ -69,6 +70,7 @@
   }
 
   function chargeForDate(account, key) {
+    if (!isActive(account)) return 0;
     if (account.billingType === "daily") return safeNumber(account.dailyCharge, 0);
     if (account.billingType === "monthEnd") {
       return isLastDayOfMonth(key) ? safeNumber(account.monthlyCharge, 0) : 0;
@@ -77,6 +79,7 @@
   }
 
   function monthSettledFeeFor(account, todayKeyValue) {
+    if (!isActive(account)) return 0;
     var parts = partsFromKey(todayKeyValue);
     if (account.billingType === "monthEnd") {
       return parts.day > daysInMonthFor(parts.year, parts.month) ? safeNumber(account.monthlyCharge, 0) : 0;
@@ -85,6 +88,7 @@
   }
 
   function settleAccount(account, today) {
+    if (!isActive(account)) return false;
     var yesterday = addDays(today, -1);
     var cursor = addDays(account.lastSettledDate || today, 1);
     var changed = false;
@@ -100,6 +104,7 @@
   }
 
   function estimateUsage(balance, account, startKey) {
+    if (!isActive(account)) return { days: 0, until: startKey };
     if (balance <= 0) return { days: 0, until: startKey };
     var remaining = balance;
     var cursor = startKey;
@@ -162,7 +167,7 @@
   function warningStatus(account, today) {
     var settledBalance = roundMoney(safeNumber(account.balance, 0));
     var estimate = estimateUsage(settledBalance, account, today);
-    var enabled = account.warningEnabled !== false;
+    var enabled = isActive(account) && account.warningEnabled !== false;
     var mode = normalizeWarningMode(account.warningMode, "balance");
     var threshold = safeNumber(account.warningThreshold, mode === "days" ? 30 : 10);
     var monthEndInfo = account.billingType === "monthEnd" ? monthEndProjection(account, today) : null;
@@ -226,11 +231,16 @@
     return Number(value).toFixed(digits);
   }
 
+  function isActive(account) {
+    return Boolean(account && !account.deleted && (!account.status || account.status === "active"));
+  }
+
   function trimNumber(value) {
     return String(Number(Number(value).toFixed(3)));
   }
 
   return {
+    isActive: isActive,
     addDays: addDays,
     chargeForDate: chargeForDate,
     compareKeys: compareKeys,

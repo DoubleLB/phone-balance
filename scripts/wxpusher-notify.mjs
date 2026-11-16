@@ -239,30 +239,45 @@ async function loadSupabaseRow(rowId) {
   return rows && rows[0] ? rows[0] : null;
 }
 
-async function saveSupabaseRow(rowId, data) {
-  const url = `${CONFIG.supabaseUrl.replace(/\/+$/, "")}/rest/v1/${encodeURIComponent(CONFIG.table)}?on_conflict=id`;
-  await requestJson(url, {
-    method: "POST",
-    headers: {
-      apikey: CONFIG.supabaseKey,
-      Authorization: `Bearer ${CONFIG.supabaseKey}`,
-      "Content-Type": "application/json",
-      Prefer: "resolution=merge-duplicates,return=minimal"
-    },
-    body: JSON.stringify({
-      id: rowId,
-      data,
-      updated_at: new Date().toISOString()
-    })
-  });
-}
-
 async function loadRemoteState() {
   return loadSupabaseRow(CONFIG.rowId);
 }
 
 async function saveRemoteState(data) {
-  return saveSupabaseRow(CONFIG.rowId, data);
+  // Always settle the latest remote accounts, never upload a stale worker snapshot.
+  for (let attempt = 0; attempt < 4; attempt += 1) {
+    const latestRow = await loadRemoteState();
+    if (!latestRow || !latestRow.updated_at || !Array.isArray(latestRow.data?.accounts)) {
+      throw new Error("Remote state missing; refusing to recreate accounts from stale data.");
+    }
+    const next = latestRow.data;
+    const history = createNotificationState(next.notificationHistory);
+    const incoming = createNotificationState(data.notificationHistory);
+    for (const [id, record] of Object.entries(incoming.accounts)) {
+      const previous = history.accounts[id] || {};
+      if (latestIso(previous.warningLastNotifiedAt, record.warningLastNotifiedAt) === record.warningLastNotifiedAt) {
+        history.accounts[id] = record;
+      }
+    }
+    next.notificationHistory = history.accounts;
+    const today = localDateKeyFromDate(new Date());
+    for (const account of next.accounts) {
+      if (settleAccount(account, today)) account.modifiedAt = new Date().toISOString();
+      account.warningLastNotifiedAt = latestIso(account.warningLastNotifiedAt, history.accounts[account.id]?.warningLastNotifiedAt);
+    }
+    next.lastUpdated = new Date().toISOString();
+    next.modifiedAt = next.lastUpdated;
+    const url = `${CONFIG.supabaseUrl.replace(/\/+$/, "")}/rest/v1/${encodeURIComponent(CONFIG.table)}`
+      + `?id=eq.${encodeURIComponent(CONFIG.rowId)}&updated_at=eq.${encodeURIComponent(latestRow.updated_at)}`;
+    const result = await requestJson(url, {
+      method: "PATCH",
+      headers: { apikey: CONFIG.supabaseKey, Authorization: `Bearer ${CONFIG.supabaseKey}`,
+        "Content-Type": "application/json", Prefer: "return=representation" },
+      body: JSON.stringify({ data: next, updated_at: new Date().toISOString() })
+    });
+    if (Array.isArray(result) && result.length) return;
+  }
+  throw new Error("Remote state changed repeatedly; retry on next run.");
 }
 
 async function sendWxPusher(payload) {
@@ -383,6 +398,14 @@ async function main() {
     let hasAccountFailure = false;
 
     for (const item of notifications) {
+      const freshRow = await loadRemoteState();
+      const freshAccount = freshRow?.data?.accounts?.find((account) => account.id === item.account.id);
+      if (!freshAccount || !billing.isActive(freshAccount)) continue;
+      settleAccount(freshAccount, today);
+      const freshStatus = warningStatus(freshAccount, today);
+      if (!freshStatus.triggered || !cooldownPassed(freshAccount, nowIso,
+        createNotificationState(freshRow.data.notificationHistory))) continue;
+      item.payload = buildTextPayload(freshAccount, freshStatus);
       if (CONFIG.dryRun) {
         log(`[dry-run] ${item.payload.title}`);
         item.account.warningLastNotifiedAt = nowIso;

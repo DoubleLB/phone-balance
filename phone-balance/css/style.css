@@ -966,6 +966,37 @@
       line-height: 1.6;
     }
 
+    .manager-heading,
+    .managed-account {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+    }
+
+    .manager-heading { color: var(--muted); font-size: 13px; }
+    .managed-accounts { display: grid; }
+    .managed-account { padding: 12px 0; border-bottom: 1px solid var(--line); flex-wrap: wrap; }
+    .managed-account > div:first-child { min-width: 0; flex: 1 1 150px; }
+    .managed-account strong { font-size: 15px; overflow-wrap: anywhere; }
+    .managed-account p { margin-top: 4px; }
+    .manager-actions { display: flex; gap: 6px; flex-wrap: wrap; }
+    .manager-actions button { min-height: 44px; padding: 0 10px; border-radius: 8px; font-size: 12px; }
+    .manager-actions .manager-delete { color: var(--warn); }
+    .account-form { border-top: 1px solid var(--line); padding-top: 16px; display: grid; gap: 12px; }
+    .account-form h3 { margin: 0; font-size: 16px; }
+    .account-form-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+    .account-form input, .account-form select { min-width: 0; }
+    .detail-header #editAccountBtn { flex: 0 0 auto; padding: 0 6px; font-size: 12px; }
+    .detail-header h1 { font-size: 24px; }
+    @media (max-width: 380px) {
+      .detail-header { flex-wrap: wrap; }
+      .detail-header .title-block { flex: 1 1 calc(100% - 64px); }
+      .detail-header #editAccountBtn { margin-left: 54px; }
+    }
+    #accountManager { scroll-margin-top: 16px; }
+    #accountForm { scroll-margin-top: 16px; }
+
     .recharge-records {
       display: grid;
       gap: 8px;
