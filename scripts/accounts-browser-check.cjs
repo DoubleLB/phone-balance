@@ -12,6 +12,7 @@ async function main() {
         billingType: "daily", dailyCharge: 1, balance: 35, warningThreshold: 7,
         lastSettledDate: "2026-11-15", modifiedAt: "2026-11-16T00:00:00Z" }], accountDefaults: {} } };
     let version = 0;
+    let failNextPatch = false;
     const errors = [];
     const clone = (value) => JSON.parse(JSON.stringify(value));
     async function newDevice(width = 390) {
@@ -25,6 +26,10 @@ async function main() {
           const method = route.request().method();
           if (method === "OPTIONS") return route.fulfill({ status: 204, headers: { "access-control-allow-origin": "*", "access-control-allow-headers": "*", "access-control-allow-methods": "*" } });
           if (method === "PATCH") {
+            if (failNextPatch) {
+              failNextPatch = false;
+              return route.fulfill({ status: 503, headers: { "access-control-allow-origin": "*" }, json: { message: "Simulated write failure" } });
+            }
             if (url.searchParams.get("updated_at") !== "eq." + row.updated_at) return route.fulfill({ json: [] });
             const body = route.request().postDataJSON();
             row = clone(body);
@@ -52,16 +57,49 @@ async function main() {
 
     const a = await newDevice();
     assert.equal(await a.page.locator("#overviewAccounts").textContent(), "1 个");
+    await a.page.goto("https://balance.test/index.html#account=unicom-02901185603");
+    await a.page.waitForFunction(() => document.getElementById("syncMode").textContent === "云端");
+    await a.page.locator("details.edit-panel").filter({ has: a.page.locator("#saveBtn") }).locator("summary").click();
+    await a.page.locator("#warningEnabledInput").uncheck();
+    await a.page.locator("#warningInput").fill("9");
+    row.data.accounts[0].balance = 40;
+    row.data.accounts[0].modifiedAt = row.data.accounts[0].userModifiedAt = "2026-11-16T12:00:10Z";
+    row.updated_at = "2026-11-16T12:00:10Z";
+    await a.page.clock.runFor(31000);
+    await a.page.waitForFunction(() => document.getElementById("syncMode").textContent === "云端");
+    assert.equal(await a.page.locator("#warningEnabledInput").isChecked(), false, "Automatic sync must preserve notification opt-out before saving");
+    assert.equal(await a.page.locator("#warningInput").inputValue(), "9", "Automatic sync must preserve edited thresholds");
+    assert.equal(await a.page.locator("#balanceInput").inputValue(), "40.00", "Unedited balances must refresh from cloud");
+    let before = version;
+    await a.page.locator("#saveBtn").click();
+    await waitVersion(before);
+    assert.equal(row.data.accounts[0].warningEnabled, false, "Notification opt-out must reach cloud storage");
+    assert.equal(row.data.accounts[0].warningThreshold, 9);
+    assert.equal(row.data.accounts[0].balance, 40, "Saving notification settings must not overwrite another device's balance");
+    await a.page.waitForFunction(() => !document.getElementById("saveBtn").disabled);
+    await a.page.locator("#warningInput").fill("11");
+    failNextPatch = true;
+    await a.page.locator("#saveBtn").click();
+    await a.page.waitForFunction(() => !document.getElementById("saveBtn").disabled && document.getElementById("syncMode").textContent === "异常");
+    assert.match(await a.page.locator("#toast").textContent(), /仅保存到本机/);
+    assert.equal(row.data.accounts[0].warningThreshold, 9, "Failed cloud writes must not report synchronized success");
+    assert.equal(await a.page.locator("#warningInput").inputValue(), "11");
+    before = version;
+    await a.page.locator("#saveBtn").click();
+    await waitVersion(before);
+    assert.equal(row.data.accounts[0].warningThreshold, 11);
+    await a.page.locator("#backBtn").click();
+    await a.page.waitForFunction(() => window.location.hash === "#home");
     await a.page.locator("#accountManager summary").click();
     await a.page.locator('[data-action="edit-account"]').click();
     await a.page.locator("#accountStatus").selectOption("paused");
     await a.page.locator("#accountHidden").check();
-    let before = version;
+    before = version;
     await a.page.locator("#saveAccountBtn").click();
     await waitVersion(before);
     assert.equal(row.data.accounts[0].status, "paused");
     assert.equal(row.data.accounts[0].hidden, true);
-    assert.equal(row.data.accounts[0].balance, 35);
+    assert.equal(row.data.accounts[0].balance, 40);
     assert.equal(await a.page.locator("#overviewAccounts").textContent(), "0 个");
     const b = await newDevice(320);
     assert.equal(await b.page.locator("#overviewAccounts").textContent(), "0 个");
@@ -74,7 +112,8 @@ async function main() {
     if (!await b.page.locator('[data-action="detail"]').count()) throw new Error(JSON.stringify({ errors, row, html: await b.page.locator("#carrierList").innerHTML() }));
     await b.page.locator('[data-action="detail"]').click();
     await b.page.waitForFunction(() => document.getElementById("accountStatusPill").textContent === "已停用");
-    assert.equal(await b.page.locator("#detailBalance").textContent(), "35.00");
+    assert.equal(await b.page.locator("#detailBalance").textContent(), "40.00");
+    assert.equal(await b.page.locator("#warningEnabledInput").isChecked(), false, "A second device must read the saved notification opt-out");
     await b.page.locator("#editAccountBtn").click();
     await b.page.locator("#accountNumber").fill("02901185604");
     before = version;
@@ -121,7 +160,7 @@ async function main() {
     await emptyDevice.page.goto("https://balance.test/index.html#account=unicom-02901185603");
     await emptyDevice.page.waitForFunction(() => window.location.hash === "#home");
     assert.deepEqual(errors, []);
-    console.log("Browser check passed: two-device pause/hide/edit/add/delete, reload, mobile layouts and dark theme");
+    console.log("Browser check passed: draft-safe sync, cloud-confirmed opt-out, failed-save retry, two-device account management, mobile layouts and dark theme");
   } finally { await browser.close(); }
 }
 main().catch((error) => { console.error(error); process.exitCode = 1; });

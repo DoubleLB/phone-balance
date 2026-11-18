@@ -135,6 +135,7 @@
       var hasCloudSyncMarker = false;
       var state = loadState();
       var activeAccountId = "";
+      var settingsDraft = { accountId: "", fields: {}, revision: 0 };
       var editingAccountId = "";
       var editingAccountVersion = "";
       var editingAccountBalance = "";
@@ -1444,6 +1445,7 @@
         var dailyFeeLabel = els.dailyFee ? els.dailyFee.previousElementSibling : null;
         var chargeDetailHint = document.querySelector(".charge-detail-body p");
 
+        if (activeAccountId !== account.id) clearSettingsDraft(account.id);
         activeAccountId = account.id;
         els.detailPage.style.setProperty("--carrier-color", carrier.color);
         els.detailPage.style.setProperty("--carrier-color-2", carrier.color2);
@@ -1489,6 +1491,13 @@
         els.warningCooldownInput.value = trimNumber(account.warningCooldownHours || 24);
         if (els.warningChannelInput) {
           els.warningChannelInput.value = account.warningChannel || "all";
+        }
+        if (settingsDraft.accountId === account.id) {
+          Object.keys(settingsDraft.fields).forEach(function (id) {
+            var input = document.getElementById(id);
+            if (input.type === "checkbox") input.checked = settingsDraft.fields[id];
+            else input.value = settingsDraft.fields[id];
+          });
         }
         updateWarningInputLabel();
         if (els.notifySummary) {
@@ -1628,6 +1637,18 @@
         };
       }
 
+      function clearSettingsDraft(accountId) {
+        settingsDraft = { accountId: accountId || "", fields: {}, revision: settingsDraft.revision + 1 };
+      }
+
+      function trackSettingsEdit(event) {
+        var input = event.target;
+        if (!activeAccountId) return;
+        if (settingsDraft.accountId !== activeAccountId) clearSettingsDraft(activeAccountId);
+        settingsDraft.fields[input.id] = input.type === "checkbox" ? input.checked : input.value;
+        settingsDraft.revision += 1;
+      }
+
       function applySettingsToAccount(account, values) {
         account.balance = values.balance;
         if (account.billingType === "daily") {
@@ -1647,21 +1668,48 @@
       function saveSettings() {
         var values = readSettingsForm();
         if (!values) return;
+        var accountId = activeAccountId;
+        var fields = Object.assign({}, settingsDraft.fields);
+        var revision = settingsDraft.revision;
+        els.saveBtn.disabled = true;
 
-        runAfterCloudWriteCheck(function () {
-          var account = accountById(activeAccountId);
+        checkCloudWriteConflict().then(function (blocked) {
+          if (blocked) return;
+          var account = accountById(accountId);
           if (!account) return;
 
-          applySettingsToAccount(account, values);
+          // Apply only edited fields to the freshly merged account, not a stale form balance.
+          if (Object.prototype.hasOwnProperty.call(fields, "balanceInput")) {
+            account.balance = values.balance;
+            account.lastSettledDate = addDays(todayKey(), -1);
+          }
+          if (Object.prototype.hasOwnProperty.call(fields, "chargeInput")) {
+            account[account.billingType === "daily" ? "dailyCharge" : "monthlyCharge"] = values.charge;
+          }
+          var warningFields = {
+            warningInput: "warningThreshold", warningEnabledInput: "warningEnabled",
+            warningModeInput: "warningMode", warningCooldownInput: "warningCooldownHours"
+          };
+          Object.keys(warningFields).forEach(function (id) {
+            if (Object.prototype.hasOwnProperty.call(fields, id)) account[warningFields[id]] = values[warningFields[id]];
+          });
           var now = nextModificationTime(account);
           account.modifiedAt = now;
           account.userModifiedAt = now;
           state.lastUpdated = now;
           state.modifiedAt = now;
           saveState();
-          flushCloudPush(false);
           render();
-          showToast("设置已保存");
+          return flushCloudPush(false).then(function (saved) {
+            if (saved || !isCloudConfigured()) {
+              if (settingsDraft.accountId === accountId && settingsDraft.revision === revision) clearSettingsDraft(accountId);
+              render();
+            }
+            showToast(saved ? "设置已保存并同步到云端" : (isCloudConfigured()
+              ? "仅保存到本机，云端未确认，请重试同步" : "设置已保存到本机"));
+          });
+        }).finally(function () {
+          els.saveBtn.disabled = false;
         });
       }
 
@@ -1813,6 +1861,7 @@
           state.modifiedAt = now;
           saveState();
           flushCloudPush(false);
+          clearSettingsDraft(account.id);
           render();
           showToast("此账号已恢复默认");
         });
@@ -1886,6 +1935,11 @@
         els.syncNowBtn.addEventListener("click", syncNow);
       }
       els.saveBtn.addEventListener("click", saveSettings);
+      [els.balanceInput, els.chargeInput, els.warningInput, els.warningEnabledInput,
+        els.warningModeInput, els.warningCooldownInput].forEach(function (input) {
+        input.addEventListener("input", trackSettingsEdit);
+        input.addEventListener("change", trackSettingsEdit);
+      });
       els.resetAccountBtn.addEventListener("click", resetCurrentAccount);
       if (els.setDefaultBtn) {
         els.setDefaultBtn.addEventListener("click", setCurrentAsDefault);
@@ -1901,6 +1955,7 @@
           homeScrollY = window.scrollY || window.pageYOffset || 0;
         }
         currentRoute = nextRoute;
+        if (previousRoute.accountId !== nextRoute.accountId) clearSettingsDraft(nextRoute.accountId);
         render();
         if (nextRoute.accountId) {
           window.scrollTo({ top: 0, behavior: "smooth" });

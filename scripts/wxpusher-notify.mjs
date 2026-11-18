@@ -129,10 +129,6 @@ function formatChinaDate(key) {
   return `${parts.year}年${parts.month}月${parts.day}日`;
 }
 
-function shouldSendBackgroundNotification() {
-  return true;
-}
-
 function buildTextPayload(account, status) {
   const type = account.type || "账号";
   const carrier = account.carrier || "运营商";
@@ -312,37 +308,44 @@ async function sendServerChan(payload) {
   });
 }
 
-async function dispatchNotification(payload) {
+function notificationSkipReason(account, today, nowIso, history) {
+  if (!account) return "account missing";
+  if (!billing.isActive(account)) return `account ${account.deleted ? "deleted" : account.status}`;
+  if (account.warningEnabled === false) return "notifications disabled";
+  if (!warningStatus(account, today).triggered) return "warning cleared";
+  if (!cooldownPassed(account, nowIso, history)) return "cooldown active";
+  return "";
+}
+
+async function latestNotification(accountId, today, nowIso, provider) {
+  const row = await loadRemoteState();
+  const account = row?.data?.accounts?.find((item) => item.id === accountId);
+  if (account) settleAccount(account, today);
+  const reason = notificationSkipReason(account, today, nowIso, createNotificationState(row?.data?.notificationHistory));
+  if (reason) {
+    log(`Skipped ${accountId} before ${provider}: ${reason}.`);
+    return null;
+  }
+  return buildTextPayload(account, warningStatus(account, today));
+}
+
+async function dispatchNotification(accountId, today, nowIso) {
   const providerResults = [];
 
-  if (CONFIG.wxPusherAppToken && CONFIG.wxPusherUids.length) {
+  for (const provider of getEnabledProviders()) {
     try {
-      const result = await sendWxPusher(payload);
+      // A stop saved while one provider is sending must suppress the next provider.
+      const payload = await latestNotification(accountId, today, nowIso, provider);
+      if (!payload) continue;
+      const result = await (provider === "wxpusher" ? sendWxPusher(payload) : sendServerChan(payload));
       providerResults.push({
-        provider: "wxpusher",
-        ok: isWxPusherSendSuccess(result),
+        provider,
+        ok: provider === "wxpusher" ? isWxPusherSendSuccess(result) : isServerChanSendSuccess(result),
         result
       });
     } catch (error) {
       providerResults.push({
-        provider: "wxpusher",
-        ok: false,
-        error: error && error.message ? error.message : String(error)
-      });
-    }
-  }
-
-  if (CONFIG.serverChanSendKey) {
-    try {
-      const result = await sendServerChan(payload);
-      providerResults.push({
-        provider: "serverchan",
-        ok: isServerChanSendSuccess(result),
-        result
-      });
-    } catch (error) {
-      providerResults.push({
-        provider: "serverchan",
+        provider,
         ok: false,
         error: error && error.message ? error.message : String(error)
       });
@@ -378,14 +381,14 @@ async function main() {
   for (const account of state.accounts) {
     if (settleAccount(account, today)) changed = true;
 
-    const status = warningStatus(account, today);
-    if (!status.triggered) continue;
-    if (!shouldSendBackgroundNotification(account)) continue;
-    if (!cooldownPassed(account, nowIso, notificationState)) continue;
+    const reason = notificationSkipReason(account, today, nowIso, notificationState);
+    if (reason) {
+      log(`Skipped ${accountNotificationKey(account)}: ${reason}.`);
+      continue;
+    }
 
     notifications.push({
-      account,
-      payload: buildTextPayload(account, status)
+      account
     });
   }
 
@@ -398,24 +401,14 @@ async function main() {
     let hasAccountFailure = false;
 
     for (const item of notifications) {
-      const freshRow = await loadRemoteState();
-      const freshAccount = freshRow?.data?.accounts?.find((account) => account.id === item.account.id);
-      if (!freshAccount || !billing.isActive(freshAccount)) continue;
-      settleAccount(freshAccount, today);
-      const freshStatus = warningStatus(freshAccount, today);
-      if (!freshStatus.triggered || !cooldownPassed(freshAccount, nowIso,
-        createNotificationState(freshRow.data.notificationHistory))) continue;
-      item.payload = buildTextPayload(freshAccount, freshStatus);
       if (CONFIG.dryRun) {
-        log(`[dry-run] ${item.payload.title}`);
-        item.account.warningLastNotifiedAt = nowIso;
-        notificationState = markNotificationSent(notificationState, item.account, nowIso, ["dry-run"]);
-        notificationChanged = true;
-        changed = true;
+        const payload = await latestNotification(item.account.id, today, nowIso, "dry-run");
+        if (payload) log(`[dry-run] ${payload.title}`);
         continue;
       }
 
-      const results = await dispatchNotification(item.payload);
+      const results = await dispatchNotification(item.account.id, today, nowIso);
+      if (!results.length) continue;
       const successCount = results.filter((result) => result.ok).length;
 
       for (const result of results) {
@@ -445,6 +438,11 @@ async function main() {
     if (hasAccountFailure) {
       throw new Error("One or more notifications failed on all providers.");
     }
+  }
+
+  if (CONFIG.dryRun) {
+    log("[dry-run] No messages sent or remote data written.");
+    return;
   }
 
   if (notificationChanged) {
